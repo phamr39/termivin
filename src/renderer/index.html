@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'" />
+  <title>Termivin</title>
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <img id="logo-img" src="../../assets/termivin-logo.png" alt="" />
+          <span>Termivin</span>
+        </div>
+      </div>
+      <div class="sidebar-section-title">
+        <span>WORKSPACES</span>
+        <button id="new-workspace-btn" class="icon-btn" title="New workspace">+</button>
+      </div>
+      <div id="workspace-list"></div>
+    </aside>
+
+    <main id="main">
+      <div id="main-header">
+        <div id="ws-title"></div>
+        <div id="view-toggle" class="segmented">
+          <button data-view="canvas" class="seg-btn">Canvas</button>
+          <button data-view="dashboard" class="seg-btn">Dashboard</button>
+        </div>
+        <div class="header-spacer"></div>
+        <button id="ws-restore-btn" class="btn btn-ghost btn-sm hidden">↻ Restore all</button>
+        <button id="attach-window-btn" class="btn btn-ghost btn-sm hidden">⧉ Attach window</button>
+        <button id="new-terminal-btn" class="btn btn-primary btn-sm">+ New terminal</button>
+      </div>
+
+      <div id="tabbar-wrap">
+        <div id="tabbar"></div>
+      </div>
+
+      <div id="content">
+        <div id="panes"></div>
+        <div id="dashboard" class="hidden"></div>
+        <div id="empty-state" class="hidden">
+          <div class="empty-icon">▣</div>
+          <div class="empty-title">No terminals in this workspace</div>
+          <div class="empty-sub">Create a terminal to get started — Claude Code, Codex, or a plain shell.</div>
+          <button id="empty-new-terminal" class="btn btn-primary">+ New terminal</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- New terminal modal -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title" id="modal-title">New terminal</div>
+      <div class="form-row">
+        <label>Name</label>
+        <input id="nt-name" type="text" placeholder="e.g. claude – api refactor" />
+      </div>
+      <div class="form-row">
+        <label>Type</label>
+        <select id="nt-type"></select>
+      </div>
+      <div class="form-row">
+        <label>Working directory</label>
+        <div class="input-with-btn">
+          <input id="nt-cwd" type="text" placeholder="~" />
+          <button id="nt-browse" class="btn btn-ghost btn-sm">Browse…</button>
+        </div>
+      </div>
+      <div class="form-row" id="nt-command-row">
+        <label>Startup command</label>
+        <input id="nt-command" type="text" placeholder="(none — just open the shell)" />
+      </div>
+      <div class="form-row" id="nt-restore-row">
+        <label>Restore command <span class="hint">(run when reopening the session)</span></label>
+        <input id="nt-restore" type="text" placeholder="e.g. claude --continue" />
+      </div>
+      <div class="form-row checkbox-row">
+        <label><input id="nt-autorestore" type="checkbox" checked /> Auto-restore when reopening this workspace</label>
+      </div>
+      <div class="modal-actions">
+        <button id="nt-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="nt-create" class="btn btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Attach external window modal -->
+  <div id="attach-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Attach external window</div>
+      <div class="attach-note">Pick a console window below, <b>or drag any window onto the canvas now</b>. One attach per click — press Esc to cancel.</div>
+      <label class="checkbox-row attach-all-row"><input id="attach-all" type="checkbox" /> Show all windows (not just terminals)</label>
+      <div id="attach-list" class="attach-list"></div>
+      <div class="modal-actions">
+        <button id="attach-refresh" class="btn btn-ghost btn-sm">↻ Refresh</button>
+        <button id="attach-cancel" class="btn btn-ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Convert external terminal to a managed terminal -->
+  <div id="convert-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Convert to Termivin terminal</div>
+      <div class="attach-note">Recreate this external terminal as a managed one — it will then survive restarts.</div>
+      <div class="form-row">
+        <label>This terminal was…</label>
+        <select id="cv-type">
+          <option value="claude">A Claude Code session → run "claude --continue"</option>
+          <option value="shell">A plain terminal → just open a shell here</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Working directory</label>
+        <div class="input-with-btn">
+          <input id="cv-cwd" type="text" list="cv-recent" />
+          <button id="cv-browse" class="btn btn-ghost btn-sm">Browse…</button>
+        </div>
+        <datalist id="cv-recent"></datalist>
+        <span class="hint">Suggestions include your recent Claude Code project folders.</span>
+      </div>
+      <div class="modal-actions">
+        <button id="cv-cancel" class="btn btn-ghost">Cancel</button>
+        <button id="cv-create" class="btn btn-primary">Create terminal</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

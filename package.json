@@ -1,0 +1,33 @@
+{
+  "name": "termivin",
+  "productName": "Termivin",
+  "version": "0.1.0",
+  "description": "Workspace manager for terminals, optimized for AI CLI clients (Claude Code, Codex)",
+  "main": "src/main.js",
+  "bin": {
+    "termivin": "bin/termivin.js"
+  },
+  "scripts": {
+    "start": "electron .",
+    "start:debug": "electron . --remote-debugging-port=9222",
+    "test:e2e": "node test/smoke.mjs",
+    "test:restore": "node test/restore.mjs",
+    "test:external": "node test/external.mjs",
+    "test:rename": "node test/rename.mjs",
+    "test:convert": "node test/convert.mjs",
+    "rebuild": "electron-rebuild -f -w node-pty"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Lieu Truong <lieu.truong.0302@gmail.com>",
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "electron": "^43.1.1",
+    "playwright-core": "^1.61.1"
+  }
+}
