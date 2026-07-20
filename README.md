@@ -10,10 +10,21 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/termivin"><img src="https://img.shields.io/npm/v/termivin?color=cb3837&logo=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/termivin"><img src="https://img.shields.io/npm/dt/termivin?color=cb3837" alt="npm downloads" /></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue" alt="License: PolyForm Noncommercial 1.0.0" /></a>
   <img src="https://img.shields.io/badge/platform-win%20%7C%20mac%20%7C%20linux-lightgrey" alt="Platforms" />
   <img src="https://img.shields.io/badge/electron-43-9feaf9" alt="Electron 43" />
 </p>
+
+## Install
+
+```bash
+npm install -g termivin
+termivin
+```
+
+Requires Node.js ≥ 18. Running `termivin` again focuses the existing window (single-instance). Package page: [npmjs.com/package/termivin](https://www.npmjs.com/package/termivin).
 
 ## Features
 
@@ -42,28 +53,18 @@
 | `saved` (gray) | Not running — stored from a previous session, ready to restore |
 | `attached` (purple) | An embedded external OS window |
 
-## Run
+## Run from source
 
 ```bash
+git clone https://github.com/phamr39/termivin.git
+cd termivin
 npm install
 npm start
 ```
 
-### `termivin` command
+To get the global `termivin` command from a source checkout, run `npm link` once.
 
-Register a global launcher once:
-
-```bash
-npm link
-```
-
-Then start (or focus, if already running — single-instance) the app from any terminal with:
-
-```bash
-termivin
-```
-
-Requires Node.js ≥ 18. `node-pty` ships prebuilt binaries (Windows x64/arm64, macOS x64/arm64); on Linux it compiles during `npm install` (needs `make`/`g++`/`python3`).
+`node-pty` ships prebuilt binaries (Windows x64/arm64, macOS x64/arm64); on Linux it compiles during `npm install` (needs `make`/`g++`/`python3`).
 
 ## State
 

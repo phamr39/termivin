@@ -39,7 +39,7 @@
   "author": "phamr39 <pha.mr3998@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/phamr39/termivin.git"
+    "url": "git+https://github.com/phamr39/termivin.git"
   },
   "homepage": "https://github.com/phamr39/termivin#readme",
   "bugs": {
