@@ -1,5 +1,8 @@
 # Publishes termivin to npmjs.org when a GitHub Release is created.
-# Requires the repository secret `npm_token` (an npmjs.com automation token).
+# Uses npm Trusted Publishing (OIDC) — no token/secret needed. One-time setup:
+# after the first (manual) publish, on npmjs.com open the package →
+# Settings → Publishing access → add GitHub Actions trusted publisher with
+# repository "phamr39/termivin" and workflow filename "npm-publish.yml".
 
 name: Publish to npm
 
@@ -28,16 +31,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # OIDC for npm Trusted Publishing (also signs provenance)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org/
+      # Trusted Publishing requires npm >= 11.5.1
+      - run: npm install -g npm@latest
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
+      - run: npm publish --access public
