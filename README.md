@@ -99,4 +99,4 @@ Termivin is source-available under the **[PolyForm Noncommercial License 1.0.0](
 - ✅ Free to use, modify, and share for **any noncommercial purpose** — personal use, research, education, charities, public institutions.
 - ❌ **Commercial use is not permitted** (using Termivin in/for a for-profit business, or selling products built on it). Contact the author for a commercial license.
 
-Copyright © 2026 Lieu Truong ([lieu.truong.0302@gmail.com](mailto:lieu.truong.0302@gmail.com)).
+Copyright © 2026 phamr39 ([pha.mr3998@gmail.com](mailto:pha.mr3998@gmail.com)).

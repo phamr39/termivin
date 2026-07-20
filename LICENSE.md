@@ -74,4 +74,4 @@ The **licensor** is the individual or entity offering these terms, and the **sof
 
 ---
 
-Required Notice: Copyright (c) 2026 Lieu Truong (lieu.truong.0302@gmail.com)
+Required Notice: Copyright (c) 2026 phamr39 (pha.mr3998@gmail.com)

@@ -33,7 +33,7 @@ Examples of unacceptable behavior:
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the maintainer at **lieu.truong.0302@gmail.com**. All complaints
+reported to the maintainer at **pha.mr3998@gmail.com**. All complaints
 will be reviewed and investigated promptly and fairly.
 
 ## Attribution

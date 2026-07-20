@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please **do not** open a public issue for security problems. Email
-**lieu.truong.0302@gmail.com** with a description of the issue, steps to
+**pha.mr3998@gmail.com** with a description of the issue, steps to
 reproduce, and the impact you believe it has. You will get a response within a
 few days.
 
