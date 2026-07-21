@@ -14,6 +14,12 @@ const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 page.on('dialog', (d) => d.accept());
 
+// confirms now use the app's themed dialog instead of native confirm()
+const acceptDialog = async () => {
+  await page.waitForSelector('.dialog-overlay:not(.hidden)', { timeout: 3000 });
+  await page.click('.dialog-ok');
+};
+
 await page.waitForSelector('.ws-item', { timeout: 10000 });
 ok('workspace sidebar renders: ' + (await page.textContent('.ws-item .ws-name')).trim());
 
@@ -86,8 +92,9 @@ const vis3 = await page.evaluate(
 if (vis3 === 2) ok('exit fullscreen returns to 2-pane canvas');
 else fail('after exit fullscreen, visible panes: ' + vis3);
 
-// remove the second terminal (pane close button, dialog auto-accepted)
+// remove the second terminal (pane close button + themed confirm dialog)
 await page.click('.pane[data-term-id]:not(.hidden):last-child .pane-close');
+await acceptDialog();
 await page.waitForTimeout(600);
 
 // --- simulate an approval prompt that actually waits for input ------------
@@ -156,7 +163,7 @@ const newWs = wsNames.find((n) => POOL.some((p) => n.startsWith(p)));
 if (newWs) ok('new workspace got a themed name: ' + newWs);
 else fail('workspace names: ' + JSON.stringify(wsNames));
 
-// clean up the extra workspace (dialog auto-accepted)
+// clean up the extra workspace (themed confirm dialog)
 const delBtn = await page.evaluateHandle((name) => {
   const item = [...document.querySelectorAll('.ws-item')]
     .find((i) => i.querySelector('.ws-name').textContent.trim() === name);
@@ -164,6 +171,7 @@ const delBtn = await page.evaluateHandle((name) => {
 }, newWs);
 if (delBtn) {
   await delBtn.asElement().click();
+  await acceptDialog();
   await page.waitForTimeout(400);
 }
 

@@ -37,6 +37,7 @@ export function ensureRuntime(meta) {
   if (rt) return rt;
 
   const info = typeInfo(meta.type);
+  const isExternal = !!meta.external || meta.type === 'external';
   const pane = document.createElement('div');
   pane.className = 'pane hidden';
   pane.dataset.termId = meta.id;
@@ -46,19 +47,28 @@ export function ensureRuntime(meta) {
       <span class="pane-icon" style="color:${info.color}">${info.icon}</span>
       <span class="pane-name"></span>
       <span class="pane-spacer"></span>
+      ${isExternal ? '' : '<button class="pane-btn pane-clone" title="Clone terminal (same folder & commands)">❐</button>'}
+      <button class="pane-btn pane-min" title="Minimize to dock">−</button>
       <button class="pane-btn pane-max" title="Fullscreen">⛶</button>
       <button class="pane-btn pane-close" title="Close">×</button>
     </div>
     <div class="pane-body"></div>
     <div class="pane-overlay hidden"></div>`;
   pane.querySelector('.pane-name').textContent = meta.name;
+  // Resize handles on every edge and corner (free resize, like an OS window).
+  for (const dir of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+    const h = document.createElement('div');
+    h.className = 'pane-rs';
+    h.dataset.dir = dir;
+    pane.appendChild(h);
+  }
   document.getElementById('panes').appendChild(pane);
 
   rt = {
     id: meta.id,
     pane,
     body: pane.querySelector('.pane-body'),
-    external: !!meta.external || meta.type === 'external',
+    external: isExternal,
     xterm: null,
     fit: null,
     running: false,

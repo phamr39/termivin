@@ -58,12 +58,76 @@ function shortPath(p) {
   return out;
 }
 
-function closeOrRemoveTerminal(termId) {
+// ------------------------------------------------------------- dialogs
+// Themed replacements for native confirm()/alert(): match the app's modal
+// look, don't block the event loop, and hide embedded external windows while
+// open (native windows always paint above the DOM).
+
+let dialogEl = null;
+
+function ensureDialogEl() {
+  if (dialogEl) return dialogEl;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay dialog-overlay hidden';
+  overlay.innerHTML = `
+    <div class="modal dialog-box">
+      <div class="modal-title dialog-title"></div>
+      <div class="dialog-message"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost dialog-cancel">Cancel</button>
+        <button class="btn btn-primary dialog-ok">OK</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  dialogEl = overlay;
+  return overlay;
+}
+
+function showDialog(message, { title = 'Termivin', okLabel = 'OK', cancelLabel = 'Cancel', danger = false, alertOnly = false } = {}) {
+  const overlay = ensureDialogEl();
+  const okBtn = overlay.querySelector('.dialog-ok');
+  const cancelBtn = overlay.querySelector('.dialog-cancel');
+  overlay.querySelector('.dialog-title').textContent = title;
+  overlay.querySelector('.dialog-message').textContent = message;
+  okBtn.textContent = okLabel;
+  okBtn.className = 'btn dialog-ok ' + (danger ? 'btn-danger' : 'btn-primary');
+  cancelBtn.textContent = cancelLabel;
+  cancelBtn.classList.toggle('hidden', alertOnly);
+  overlay.classList.remove('hidden');
+  syncExternalRects();
+
+  return new Promise((resolve) => {
+    const done = (val) => {
+      overlay.classList.add('hidden');
+      okBtn.onclick = cancelBtn.onclick = overlay.onclick = overlay.onkeydown = null;
+      syncExternalRects();
+      resolve(val);
+    };
+    okBtn.onclick = () => done(true);
+    cancelBtn.onclick = () => done(false);
+    overlay.onclick = (e) => {
+      if (e.target === overlay) done(false);
+    };
+    overlay.onkeydown = (e) => {
+      if (e.key === 'Escape') done(false);
+      if (e.key === 'Enter') done(true);
+    };
+    okBtn.focus();
+  });
+}
+
+export const uiConfirm = (message, opts = {}) => showDialog(message, opts);
+export const uiAlert = (message, opts = {}) => showDialog(message, { ...opts, alertOnly: true });
+
+async function closeOrRemoveTerminal(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
   const t = found.meta;
   if (t.external) {
-    if (!confirm(`Detach "${t.name}" (the window returns to the desktop) and remove it from the workspace?`)) return;
+    const yes = await uiConfirm(
+      `Detach "${t.name}" (the window returns to the desktop) and remove it from the workspace?`,
+      { title: 'Remove external window', okLabel: 'Detach & remove', danger: true });
+    if (!yes) return;
     detachExternal(termId, { remove: true });
     return;
   }
@@ -71,10 +135,31 @@ function closeOrRemoveTerminal(termId) {
   const msg = running
     ? `Close terminal "${t.name}"? The running process will be stopped and the terminal removed from the workspace.`
     : `Remove terminal "${t.name}" from the workspace?`;
-  if (!confirm(msg)) return;
+  const yes = await uiConfirm(msg, {
+    title: running ? 'Close terminal' : 'Remove terminal',
+    okLabel: running ? 'Close' : 'Remove',
+    danger: true,
+  });
+  if (!yes) return;
   TM.disposeTerminal(termId);
   S.removeTerminal(termId);
   renderAll();
+}
+
+// Clone a terminal: open the new-terminal dialog prefilled with the source's
+// cwd, commands and settings so the user can tweak before creating. The name
+// placeholder is a fresh pool name that doesn't collide with the source.
+function cloneTerminal(termId) {
+  const found = S.findTerminal(termId);
+  if (!found || found.meta.external || found.meta.type === 'external') return;
+  const src = found.meta;
+  openModal({
+    type: src.type,
+    cwd: src.cwd,
+    command: src.command,
+    restoreCommand: src.restoreCommand,
+    autoRestore: src.autoRestore,
+  });
 }
 
 // ---------------------------------------------------------------- sidebar
@@ -98,6 +183,7 @@ export function renderSidebar() {
   for (const ws of state.workspaces) {
     const item = el('div', 'ws-item' + (ws.id === state.activeWorkspaceId ? ' active' : ''));
     item.dataset.wsId = ws.id;
+    item.draggable = true;
 
     const name = el('span', 'ws-name', ws.name);
     const badges = el('span', 'ws-badges');
@@ -112,6 +198,7 @@ export function renderSidebar() {
     list.appendChild(item);
 
     const startRename = () => {
+      item.draggable = false; // draggable parents break text selection in the input
       inlineRename(name, ws.name, (val) => {
         if (val) S.renameWorkspace(ws.id, val);
         renderSidebar();
@@ -137,31 +224,58 @@ export function renderSidebar() {
       startRename();
     });
 
-    del.addEventListener('click', (e) => {
+    del.addEventListener('click', async (e) => {
       e.stopPropagation();
       const n = ws.terminals.length;
       const msg = n
         ? `Delete workspace "${ws.name}" and its ${n} terminal(s)? Running processes will be stopped.`
         : `Delete workspace "${ws.name}"?`;
-      if (!confirm(msg)) return;
+      if (!(await uiConfirm(msg, { title: 'Delete workspace', okLabel: 'Delete', danger: true }))) return;
       const orphans = S.removeWorkspace(ws.id);
       for (const t of orphans) TM.disposeTerminal(t.id);
       renderAll();
     });
 
-    // Drop target for terminal tabs
+    // Drag source for workspace reordering
+    item.addEventListener('dragstart', (e) => {
+      dragWsId = ws.id;
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', () => {
+      dragWsId = null;
+      clearWsDropMarkers();
+    });
+
+    // Drop target: terminal tabs move into this workspace; other workspace
+    // items reorder around it (top/bottom half = insert before/after).
     item.addEventListener('dragover', (e) => {
       if (dragTermId) {
         e.preventDefault();
         item.classList.add('drop-target');
+      } else if (dragWsId && dragWsId !== ws.id) {
+        e.preventDefault();
+        const r = item.getBoundingClientRect();
+        const before = e.clientY < r.top + r.height / 2;
+        item.classList.toggle('ws-drop-before', before);
+        item.classList.toggle('ws-drop-after', !before);
       }
     });
-    item.addEventListener('dragleave', () => item.classList.remove('drop-target'));
+    item.addEventListener('dragleave', () =>
+      item.classList.remove('drop-target', 'ws-drop-before', 'ws-drop-after'));
     item.addEventListener('drop', (e) => {
       e.preventDefault();
-      item.classList.remove('drop-target');
+      item.classList.remove('drop-target', 'ws-drop-before', 'ws-drop-after');
       if (dragTermId) {
         S.moveTerminal(dragTermId, ws.id);
+        renderAll();
+      } else if (dragWsId && dragWsId !== ws.id) {
+        const r = item.getBoundingClientRect();
+        const before = e.clientY < r.top + r.height / 2;
+        const list = S.getState().workspaces;
+        const targetIdx = list.findIndex((w) => w.id === ws.id);
+        const beforeId = before ? ws.id : (list[targetIdx + 1] ? list[targetIdx + 1].id : null);
+        S.moveWorkspace(dragWsId, beforeId);
+        dragWsId = null;
         renderAll();
       }
     });
@@ -195,7 +309,63 @@ export function renderHeader() {
 
   const anySaved = ws && ws.terminals.some((t) => !t.external && !TM.isRunning(t.id));
   $('#ws-restore-btn').classList.toggle('hidden', !ws || !anySaved);
+  const anyOpen = ws && ws.terminals.filter((t) => !t.minimized).length > 1;
+  $('#arrange-btn').classList.toggle('hidden', !anyOpen);
   $('#attach-window-btn').classList.toggle('hidden', !isWin);
+}
+
+// Tile all open (non-minimized) terminals of the active workspace into a
+// grid that fills the canvas, leaving the dock strip clear when present.
+function arrangeTerminals() {
+  const ws = S.activeWorkspace();
+  if (!ws) return;
+  ws.view = 'canvas';
+  ws.fullscreenTerminalId = null;
+  const items = ws.terminals.filter((t) => !t.minimized);
+  if (!items.length) return;
+
+  const host = $('#content').getBoundingClientRect();
+  const MARGIN = 10;
+  const GAP = 10;
+  const dockW = ws.terminals.some((t) => t.minimized) ? 220 : 0;
+  const availW = Math.max(320, host.width - dockW - MARGIN * 2);
+  const availH = Math.max(180, host.height - MARGIN * 2);
+  const n = items.length;
+
+  // Pick the column count whose cells come closest to a 16:10 aspect ratio.
+  let cols = Math.ceil(Math.sqrt(n));
+  let bestScore = -Infinity;
+  for (let c = 1; c <= n; c++) {
+    const r = Math.ceil(n / c);
+    const cw = (availW - GAP * (c - 1)) / c;
+    const ch = (availH - GAP * (r - 1)) / r;
+    const score = -Math.abs(Math.log((cw / ch) / 1.6));
+    if (score > bestScore) {
+      bestScore = score;
+      cols = c;
+    }
+  }
+  const rows = Math.ceil(n / cols);
+  const w = Math.max(320, Math.floor((availW - GAP * (cols - 1)) / cols));
+  const h = Math.max(180, Math.floor((availH - GAP * (rows - 1)) / rows));
+
+  items.forEach((t, i) => {
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    t.layout.x = MARGIN + c * (w + GAP);
+    t.layout.y = MARGIN + r * (h + GAP);
+    t.layout.w = w;
+    t.layout.h = h;
+  });
+  S.scheduleSave();
+  renderContent();
+}
+
+let dragWsId = null;
+
+function clearWsDropMarkers() {
+  document.querySelectorAll('.ws-item').forEach((i) =>
+    i.classList.remove('ws-drop-before', 'ws-drop-after'));
 }
 
 // ---------------------------------------------------------------- tabs
@@ -210,7 +380,7 @@ export function renderTabs() {
 
   for (const t of ws.terminals) {
     const info = typeInfo(t.external ? 'external' : t.type);
-    const tab = el('div', 'tab' + (t.id === ws.activeTerminalId ? ' active' : ''));
+    const tab = el('div', 'tab' + (t.id === ws.activeTerminalId ? ' active' : '') + (t.minimized ? ' minimized' : ''));
     tab.dataset.termId = t.id;
     tab.draggable = true;
 
@@ -225,6 +395,10 @@ export function renderTabs() {
 
     tab.addEventListener('click', (e) => {
       if (e.target === close) return;
+      if (t.minimized) {
+        restoreMinimized(t.id);
+        return;
+      }
       // Light path when the tab is already active: keep the DOM stable so a
       // double-click reaches the rename handler.
       if (t.id === ws.activeTerminalId && ws.view === 'canvas') {
@@ -326,6 +500,7 @@ export function renderContent() {
     tabwrap.classList.add('hidden');
     empty.classList.remove('hidden');
     hideAllPanes();
+    renderDock();
     syncExternalRects();
     return;
   }
@@ -337,6 +512,7 @@ export function renderContent() {
     dash.classList.remove('hidden');
     hideAllPanes();
     renderDashboard();
+    renderDock();
     syncExternalRects();
     return;
   }
@@ -362,7 +538,8 @@ export function renderContent() {
       pane.classList.toggle('fullscreen', t.id === fsId);
       pane.classList.toggle('hidden', t.id !== fsId);
     } else {
-      pane.classList.remove('fullscreen', 'hidden');
+      pane.classList.remove('fullscreen');
+      pane.classList.toggle('hidden', !!t.minimized);
       applyLayout(pane, t.layout);
     }
     pane.classList.toggle('focused', t.id === ws.activeTerminalId);
@@ -377,6 +554,7 @@ export function renderContent() {
   });
 
   updatePanes();
+  renderDock();
   TM.fitAllVisible();
   syncExternalRects();
 }
@@ -396,12 +574,96 @@ function applyLayout(pane, layout) {
 export function toggleFullscreen(termId) {
   const ws = S.activeWorkspace();
   if (!ws) return;
+  const found = S.findTerminal(termId);
+  if (found && found.meta.minimized) found.meta.minimized = false;
   ws.fullscreenTerminalId = ws.fullscreenTerminalId === termId ? null : termId;
   ws.activeTerminalId = termId;
   ws.view = 'canvas';
   S.scheduleSave();
   renderAll();
   TM.focusTerminal(termId);
+}
+
+// --------------------------------------------------------------- dock
+// Minimize rarely-watched terminals (dev servers, watchers…) into a compact
+// chip stack on the right edge of the canvas. They keep running — the chip
+// shows live status and pulses on approval prompts. Click a chip to restore.
+
+function minimizeTerminal(termId) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  found.meta.minimized = true;
+  if (found.ws.fullscreenTerminalId === termId) found.ws.fullscreenTerminalId = null;
+  S.scheduleSave();
+  renderContent();
+  renderTabs();
+}
+
+function restoreMinimized(termId) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  found.meta.minimized = false;
+  found.ws.activeTerminalId = termId;
+  S.bringToFront(termId);
+  S.scheduleSave();
+  renderContent();
+  renderTabs();
+  TM.focusTerminal(termId);
+}
+
+function renderDock() {
+  const dock = $('#dock');
+  const ws = S.activeWorkspace();
+  const docked =
+    ws && ws.view === 'canvas' && !ws.fullscreenTerminalId
+      ? ws.terminals.filter((t) => t.minimized)
+      : [];
+  dock.classList.toggle('hidden', !docked.length);
+  dock.innerHTML = '';
+  for (const t of docked) {
+    const info = typeInfo(t.external ? 'external' : t.type);
+    const st = TM.getStatus(t.id);
+    const chip = el('div', 'dock-chip' + (st === 'approval' ? ' needs-approval' : ''));
+    chip.dataset.termId = t.id;
+    chip.title = `${t.name} — click to restore`;
+    const head = el('div', 'dock-head');
+    const dot = el('span', 'dot st-' + st);
+    const icon = el('span', 'dock-icon', info.icon);
+    icon.style.color = info.color;
+    const name = el('span', 'dock-name', t.name);
+    head.append(dot, icon, name);
+    const preview = el('div', 'dock-preview');
+    setDockPreview(preview, t);
+    chip.append(head, preview);
+    chip.addEventListener('click', () => restoreMinimized(t.id));
+    dock.appendChild(chip);
+  }
+}
+
+function setDockPreview(previewEl, t) {
+  if (t.external) {
+    previewEl.textContent = '(external window)';
+    return;
+  }
+  const lines = TM.getPreview(t.id, 6);
+  const text = lines.length ? lines.join('\n') : '(no output yet)';
+  if (previewEl.textContent !== text) {
+    previewEl.textContent = text;
+    previewEl.scrollTop = previewEl.scrollHeight;
+  }
+}
+
+// Refresh chip status dots + previews without rebuilding the dock
+function updateDock() {
+  document.querySelectorAll('#dock .dock-chip').forEach((chip) => {
+    const termId = chip.dataset.termId;
+    const st = TM.getStatus(termId);
+    chip.querySelector('.dot').className = 'dot st-' + st;
+    chip.classList.toggle('needs-approval', st === 'approval');
+    const found = S.findTerminal(termId);
+    const previewEl = chip.querySelector('.dock-preview');
+    if (found && previewEl) setDockPreview(previewEl, found.meta);
+  });
 }
 
 // Update pane title bars + not-running overlays (canvas view)
@@ -498,39 +760,127 @@ function setupCanvasInteractions() {
     pane.classList.add('focused');
 
     if (e.target.closest('.pane-btn')) return;
-    const bar = e.target.closest('.pane-bar');
-    if (bar && !ws.fullscreenTerminalId && found) {
+
+    // Resize from any edge/corner via the .pane-rs handles.
+    const handle = e.target.closest('.pane-rs');
+    if (handle && !ws.fullscreenTerminalId && found) {
       drag = {
+        mode: handle.dataset.dir,
         meta: found.meta,
         pane,
         startX: e.clientX,
         startY: e.clientY,
-        origX: found.meta.layout.x,
-        origY: found.meta.layout.y,
+        orig: { ...found.meta.layout },
       };
+      document.body.style.cursor = getComputedStyle(handle).cursor;
+      document.body.classList.add('dragging-pane');
+      e.preventDefault();
+      return;
+    }
+
+    const bar = e.target.closest('.pane-bar');
+    if (bar && !ws.fullscreenTerminalId && found) {
+      drag = {
+        mode: 'move',
+        meta: found.meta,
+        pane,
+        startX: e.clientX,
+        startY: e.clientY,
+        orig: { ...found.meta.layout },
+      };
+      // Embedded native windows paint above ALL DOM (sidebar, dialogs), so
+      // hide them for the duration of the drag — the pane frame remains as
+      // the drag feedback. Re-shown on mouseup by syncExternalRects.
+      if (found.meta.external && TM.isAttached(termId)) {
+        hiddenWhileDragId = termId;
+        window.termivin.externalShow({ hwnd: found.meta.external.hwnd, visible: false });
+      }
       document.body.classList.add('dragging-pane');
       e.preventDefault();
     }
   });
 
+  const MIN_W = 320;
+  const MIN_H = 180;
+
   window.addEventListener('mousemove', (e) => {
     if (!drag) return;
     const host = $('#content').getBoundingClientRect();
-    let x = drag.origX + (e.clientX - drag.startX);
-    let y = drag.origY + (e.clientY - drag.startY);
-    x = Math.max(-drag.meta.layout.w + 120, Math.min(x, host.width - 60));
-    y = Math.max(0, Math.min(y, host.height - 40));
-    drag.meta.layout.x = x;
-    drag.meta.layout.y = y;
-    drag.pane.style.left = x + 'px';
-    drag.pane.style.top = y + 'px';
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const o = drag.orig;
+    const L = drag.meta.layout;
+
+    if (drag.mode === 'move') {
+      // External panes may never overhang the canvas — the native window
+      // inside cannot be clipped by the DOM and would cover the sidebar.
+      const minX = drag.meta.external ? 0 : -o.w + 120;
+      L.x = Math.max(minX, Math.min(o.x + dx, host.width - 60));
+      L.y = Math.max(0, Math.min(o.y + dy, host.height - 40));
+      // Dragging over the sidebar: highlight the workspace under the cursor
+      // as a move target (drop there → confirm dialog → move the terminal).
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const item = under && under.closest('.ws-item');
+      const targetId =
+        item && item.dataset.wsId !== S.getState().activeWorkspaceId ? item.dataset.wsId : null;
+      if (targetId !== drag.dropWsId) {
+        drag.dropWsId = targetId;
+        document.querySelectorAll('.ws-item.drop-target').forEach((i) => i.classList.remove('drop-target'));
+        if (targetId) item.classList.add('drop-target');
+      }
+    } else {
+      // Resize: east/south grow the box; west/north also shift the origin so
+      // the opposite edge stays put — like resizing a real OS window.
+      if (drag.mode.includes('e')) L.w = Math.max(MIN_W, o.w + dx);
+      if (drag.mode.includes('s')) L.h = Math.max(MIN_H, o.h + dy);
+      if (drag.mode.includes('w')) {
+        const overhang = drag.meta.external ? 0 : 60; // externals can't overhang (native window)
+        L.w = Math.max(MIN_W, Math.min(o.w - dx, o.x + o.w + overhang));
+        L.x = o.x + (o.w - L.w);
+      }
+      if (drag.mode.includes('n')) {
+        L.h = Math.max(MIN_H, Math.min(o.h - dy, o.y + o.h));
+        L.y = o.y + (o.h - L.h);
+      }
+      drag.pane.style.width = L.w + 'px';
+      drag.pane.style.height = L.h + 'px';
+    }
+    drag.pane.style.left = L.x + 'px';
+    drag.pane.style.top = L.y + 'px';
     throttledSyncExternal();
   });
 
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', async () => {
+    hiddenWhileDragId = null;
     if (drag) {
+      const d = drag;
       drag = null;
       document.body.classList.remove('dragging-pane');
+      document.body.style.cursor = '';
+
+      // Dropped on a sidebar workspace → confirm, then move the terminal.
+      if (d.mode === 'move' && d.dropWsId) {
+        document.querySelectorAll('.ws-item.drop-target').forEach((i) => i.classList.remove('drop-target'));
+        // snap the pane back — this drag targeted the sidebar, not a new spot
+        d.meta.layout.x = d.orig.x;
+        d.meta.layout.y = d.orig.y;
+        applyLayout(d.pane, d.meta.layout);
+        syncExternalRects();
+        const target = S.getWorkspace(d.dropWsId);
+        if (target) {
+          const yes = await uiConfirm(
+            `Move terminal "${d.meta.name}" to workspace "${target.name}"?`,
+            { title: 'Move terminal', okLabel: 'Move' });
+          if (yes) {
+            S.moveTerminal(d.meta.id, target.id);
+            renderAll();
+            return;
+          }
+        }
+        S.scheduleSave();
+        syncExternalRects();
+        return;
+      }
       S.scheduleSave();
     }
     persistPaneSizes();
@@ -561,6 +911,8 @@ function setupCanvasInteractions() {
     if (!pane) return;
     const termId = pane.dataset.termId;
     if (e.target.closest('.pane-max')) toggleFullscreen(termId);
+    else if (e.target.closest('.pane-min')) minimizeTerminal(termId);
+    else if (e.target.closest('.pane-clone')) cloneTerminal(termId);
     else if (e.target.closest('.pane-close')) closeOrRemoveTerminal(termId);
   });
 
@@ -592,6 +944,10 @@ function renderTabsActiveOnly(ws) {
 
 // ---------------------------------------------------------------- external
 
+// External window temporarily hidden while its pane is being dragged
+// (native windows can't be clipped and would cover the sidebar/dialogs).
+let hiddenWhileDragId = null;
+
 let syncRaf = 0;
 function throttledSyncExternal() {
   cancelAnimationFrame(syncRaf);
@@ -603,12 +959,17 @@ export function syncExternalRects() {
   const state = S.getState();
   const active = S.activeWorkspace();
   const dpr = window.devicePixelRatio || 1;
+  // Embedded native windows always paint above the DOM, so hide them while
+  // any modal/dialog is open — otherwise they'd cover it.
+  const modalUp = !!document.querySelector('.modal-overlay:not(.hidden)');
 
   for (const ws of state.workspaces) {
     for (const t of ws.terminals) {
       if (!t.external || !TM.isAttached(t.id)) continue;
       const rt = TM.getRuntime(t.id);
       const visible =
+        !modalUp &&
+        t.id !== hiddenWhileDragId &&
         ws === active &&
         ws.view === 'canvas' &&
         rt &&
@@ -684,12 +1045,14 @@ export function openAttachModal(termId) {
   attachTargetTermId = termId;
   attachArmed = true;
   $('#attach-overlay').classList.remove('hidden');
+  syncExternalRects();
   loadAttachList();
 }
 
 function closeAttachModal() {
   $('#attach-overlay').classList.add('hidden');
   attachArmed = false;
+  syncExternalRects();
 }
 
 async function loadAttachList() {
@@ -764,7 +1127,7 @@ async function doAttach(w) {
     TM.markAttached(meta.id, true);
     captureExternalCwd(meta);
   } else {
-    alert('Could not attach window: ' + (res.error || 'unknown error'));
+    await uiAlert('Could not attach window: ' + (res.error || 'unknown error'), { title: 'Attach failed' });
     if (!attachTargetTermId) {
       // brand-new entry that failed to attach — don't leave a dead card behind
       TM.disposeTerminal(meta.id);
@@ -817,6 +1180,7 @@ export async function openConvertModal(termId) {
   $('#cv-type').value = looksClaude ? 'claude' : 'shell';
   $('#cv-cwd').value = meta.cwd || window.termivin.homedir;
   $('#convert-overlay').classList.remove('hidden');
+  syncExternalRects();
 
   // fill suggestions: captured shell cwds first, then recent Claude projects
   const dl = $('#cv-recent');
@@ -838,6 +1202,7 @@ export async function openConvertModal(termId) {
 function closeConvertModal() {
   $('#convert-overlay').classList.add('hidden');
   convertTermId = null;
+  syncExternalRects();
 }
 
 async function doConvert() {
@@ -1028,8 +1393,14 @@ function buildCardActions(t, actions) {
   if (t.external) {
     if (st === 'attached') {
       mkBtn('⤢ Open', 'btn-ghost', openInCanvas);
-      mkBtn('⇱ Detach', 'btn-ghost', () => {
-        if (confirm(`Detach "${t.name}"? The window returns to the desktop.`)) {
+      mkBtn(t.minimized ? '⊞ Restore' : '⊟ Minimize', 'btn-ghost', () => {
+        if (t.minimized) restoreMinimized(t.id);
+        else minimizeTerminal(t.id);
+        updateCardFull(t.id);
+      });
+      mkBtn('⇱ Detach', 'btn-ghost', async () => {
+        if (await uiConfirm(`Detach "${t.name}"? The window returns to the desktop.`,
+            { title: 'Detach window', okLabel: 'Detach' })) {
           detachExternal(t.id, { remove: false });
         }
       });
@@ -1057,12 +1428,19 @@ function buildCardActions(t, actions) {
         renderAll();
       });
     }
+    mkBtn('❐ Clone', 'btn-ghost', () => cloneTerminal(t.id));
     mkBtn('🗑 Remove', 'btn-ghost btn-danger-text', () => closeOrRemoveTerminal(t.id));
   } else {
     mkBtn('⤢ Open', 'btn-ghost', openInCanvas);
+    mkBtn(t.minimized ? '⊞ Restore' : '⊟ Minimize', 'btn-ghost', () => {
+      if (t.minimized) restoreMinimized(t.id);
+      else minimizeTerminal(t.id);
+      updateCardFull(t.id);
+    });
+    mkBtn('❐ Clone', 'btn-ghost', () => cloneTerminal(t.id));
     mkBtn('⛶ Fullscreen', 'btn-ghost', () => toggleFullscreen(t.id));
-    mkBtn('■ Stop', 'btn-ghost btn-danger-text', () => {
-      if (!confirm(`Stop the process in "${t.name}"?`)) return;
+    mkBtn('■ Stop', 'btn-ghost btn-danger-text', async () => {
+      if (!(await uiConfirm(`Stop the process in "${t.name}"?`, { title: 'Stop process', okLabel: 'Stop', danger: true }))) return;
       TM.stopTerminal(t.id);
       updateCardFull(t.id);
     });
@@ -1123,6 +1501,7 @@ export function updateLive() {
   }
   renderSidebarBadges();
   updatePanes();
+  updateDock();
   updateDashboard();
 }
 
@@ -1181,27 +1560,31 @@ export function setupModal() {
   $('#empty-new-terminal').addEventListener('click', open);
 }
 
-export function openModal() {
+// prefill: clone flow — seed the fields from an existing terminal instead of
+// the type preset, and let the user adjust before creating.
+export function openModal(prefill = null) {
   const ws = S.activeWorkspace();
   if (!ws) return;
   const overlay = $('#modal-overlay');
   overlay.classList.remove('hidden');
+  syncExternalRects();
   const typeSel = $('#nt-type');
-  typeSel.value = 'claude';
-  const info = typeInfo('claude');
+  const type = (prefill && prefill.type) || 'claude';
+  typeSel.value = typeSel.querySelector(`option[value="${type}"]`) ? type : 'custom';
+  const info = typeInfo(type);
   const existingNames = ws.terminals.map((t) => t.name);
   $('#nt-name').value = '';
   $('#nt-name').placeholder = randomTerminalName(existingNames);
-  $('#nt-command').value = info.command;
-  $('#nt-restore').value = info.restoreCommand;
-  const lastCwd = lastUsedCwd || window.termivin.homedir;
-  $('#nt-cwd').value = lastCwd;
-  $('#nt-autorestore').checked = true;
+  $('#nt-command').value = prefill ? prefill.command || '' : info.command;
+  $('#nt-restore').value = prefill ? prefill.restoreCommand || '' : info.restoreCommand;
+  $('#nt-cwd').value = (prefill && prefill.cwd) || lastUsedCwd || window.termivin.homedir;
+  $('#nt-autorestore').checked = prefill ? prefill.autoRestore !== false : true;
   $('#nt-name').focus();
 }
 
 function closeModal() {
   $('#modal-overlay').classList.add('hidden');
+  syncExternalRects();
 }
 
 let lastUsedCwd = null;
@@ -1263,6 +1646,8 @@ export function setupChrome() {
       renderAll();
     });
   }
+
+  $('#arrange-btn').addEventListener('click', arrangeTerminals);
 
   $('#ws-restore-btn').addEventListener('click', async () => {
     const ws = S.activeWorkspace();

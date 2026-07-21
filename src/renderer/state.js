@@ -32,6 +32,13 @@ export async function loadState() {
     if (!Array.isArray(ws.terminals)) ws.terminals = [];
     ws.terminals.forEach((t, i) => {
       if (!t.layout) t.layout = defaultLayout(i);
+      if (!('minimized' in t)) t.minimized = false;
+      // external panes must stay fully inside the canvas (their embedded
+      // native window cannot be clipped by the DOM)
+      if (t.external) {
+        t.layout.x = Math.max(0, t.layout.x);
+        t.layout.y = Math.max(0, t.layout.y);
+      }
     });
   }
   // Continue the z-order counter above anything persisted, so new/raised
@@ -107,6 +114,23 @@ export function renameWorkspace(wsId, name) {
   }
 }
 
+// Reorder workspaces (sidebar drag & drop). beforeWsId: insert position, or
+// null to move to the end.
+export function moveWorkspace(wsId, beforeWsId = null) {
+  if (wsId === beforeWsId) return false;
+  const idx = state.workspaces.findIndex((w) => w.id === wsId);
+  if (idx === -1) return false;
+  const [ws] = state.workspaces.splice(idx, 1);
+  let insertIdx = state.workspaces.length;
+  if (beforeWsId) {
+    const i = state.workspaces.findIndex((w) => w.id === beforeWsId);
+    if (i !== -1) insertIdx = i;
+  }
+  state.workspaces.splice(insertIdx, 0, ws);
+  scheduleSave();
+  return true;
+}
+
 export function getWorkspace(wsId) {
   return state.workspaces.find((w) => w.id === wsId) || null;
 }
@@ -136,6 +160,7 @@ export function addTerminal(wsId, meta) {
     command: meta.command || '',
     restoreCommand: meta.restoreCommand || '',
     autoRestore: meta.autoRestore !== false,
+    minimized: false,
     savedTail: [],
     layout: defaultLayout(ws.terminals.length),
     external: meta.external || null, // { pid, hwnd, title } for attached OS windows

@@ -33,6 +33,12 @@
     "test:external": "node test/external.mjs",
     "test:rename": "node test/rename.mjs",
     "test:convert": "node test/convert.mjs",
+    "test:clone": "node test/clone.mjs",
+    "test:resize": "node test/resize.mjs",
+    "test:dock": "node test/dock.mjs",
+    "test:arrange": "node test/arrange.mjs",
+    "test:ws-reorder": "node test/ws-reorder.mjs",
+    "test:move-drag": "node test/move-drag.mjs",
     "rebuild": "electron-rebuild -f -w node-pty"
   },
   "license": "PolyForm-Noncommercial-1.0.0",

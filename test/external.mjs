@@ -98,6 +98,8 @@ if (!fresh) {
     return c ? [...c.querySelectorAll('button')].find((b) => b.textContent.includes('Detach')) : null;
   });
   await detachBtn.asElement().click();
+  await page.waitForSelector('.dialog-overlay:not(.hidden)', { timeout: 3000 });
+  await page.click('.dialog-ok');
   await page.waitForTimeout(2000);
 
   const aliveAfter = await page.evaluate((h) => window.termivin.externalAlive(h), state.hwnd);
@@ -120,6 +122,8 @@ if (!fresh) {
   });
   if (removeBtn.asElement()) {
     await removeBtn.asElement().click();
+    await page.waitForSelector('.dialog-overlay:not(.hidden)', { timeout: 3000 });
+    await page.click('.dialog-ok');
     await page.waitForTimeout(500);
   }
   ok('cleanup done');
