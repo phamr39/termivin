@@ -26,6 +26,21 @@ termivin
 
 Requires Node.js ≥ 18. Running `termivin` again focuses the existing window (single-instance). Package page: [npmjs.com/package/termivin](https://www.npmjs.com/package/termivin).
 
+## Command line
+
+The global `termivin` command is a small CLI (works the same on Windows, macOS and Linux):
+
+```bash
+termivin              # launch the app (or focus the existing window)
+termivin update       # update to the latest published version via npm
+termivin --help       # -h   show usage and exit
+termivin --version    # -v   print the installed version and exit
+termivin --update     # -u   same as "termivin update"
+termivin --debug      # launch with the DevTools remote debugging port (9222) open
+```
+
+Any unrecognized options are forwarded straight to Electron.
+
 ## Features
 
 - **Workspaces** — group terminals into named workspaces (new workspaces get a themed name suggestion — Riverside, Times City, Ocean Park…; new terminals get Termi-style names — TermiFast, TermiUni…). Rename anything by double-clicking its name. Drag a terminal tab onto another workspace in the sidebar to move it; drag onto another tab to reorder. Workspaces themselves reorder the same way — drag an item up or down the sidebar (an accent line shows where it will land). You can also drag a terminal **by its title bar** straight onto a sidebar workspace: the target highlights, and a confirm dialog moves the terminal there.

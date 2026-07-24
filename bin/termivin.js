@@ -10,7 +10,13 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 const pkg = require(path.join(root, 'package.json'));
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const isWin = process.platform === 'win32';
+const npm = isWin ? 'npm.cmd' : 'npm';
+// On Windows, Node refuses to spawn a .cmd/.bat file without shell:true since
+// the CVE-2024-27980 fix (Node 18.20/20.12/22+); without it the npm.cmd shim
+// fails with EINVAL. shell:true is safe here because every argument we pass is
+// a static, metacharacter-free literal.
+const npmSpawnOpts = isWin ? { shell: true } : {};
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -40,10 +46,10 @@ Homepage: ${pkg.homepage}
 }
 
 function runUpdate() {
-  console.log(`Termivin ${pkg.version} — checking for a newer release…`);
+  console.log(`Termivin ${pkg.version} - checking for a newer release...`);
   let latest = '';
   try {
-    const view = spawnSync(npm, ['view', pkg.name, 'version'], { encoding: 'utf8' });
+    const view = spawnSync(npm, ['view', pkg.name, 'version'], { encoding: 'utf8', ...npmSpawnOpts });
     if (view.status === 0) latest = String(view.stdout || '').trim();
   } catch {}
 
@@ -51,10 +57,10 @@ function runUpdate() {
     console.log(`Already up to date (${pkg.version}).`);
     return 0;
   }
-  if (latest) console.log(`Updating ${pkg.version} → ${latest}…`);
-  else console.log('Could not reach the npm registry; attempting update anyway…');
+  if (latest) console.log(`Updating ${pkg.version} -> ${latest}...`);
+  else console.log('Could not reach the npm registry; attempting update anyway...');
 
-  const res = spawnSync(npm, ['install', '-g', `${pkg.name}@latest`], { stdio: 'inherit' });
+  const res = spawnSync(npm, ['install', '-g', `${pkg.name}@latest`], { stdio: 'inherit', ...npmSpawnOpts });
   if (res.error) {
     console.error('Update failed: ' + res.error.message);
     return 1;
