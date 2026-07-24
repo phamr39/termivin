@@ -39,7 +39,11 @@
     "test:arrange": "node test/arrange.mjs",
     "test:ws-reorder": "node test/ws-reorder.mjs",
     "test:move-drag": "node test/move-drag.mjs",
-    "rebuild": "electron-rebuild -f -w node-pty"
+    "test:adopt": "node test/adopt.mjs",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "icns": "bash scripts/make-icns.sh",
+    "pack:mac": "electron-builder --mac --dir",
+    "dist:mac": "electron-builder --mac"
   },
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "phamr39 <pha.mr3998@gmail.com>",
@@ -54,15 +58,52 @@
   "engines": {
     "node": ">=18"
   },
+  "build": {
+    "appId": "com.termivin.app",
+    "productName": "Termivin",
+    "copyright": "Copyright © 2026 phamr39",
+    "afterPack": "./build/after-pack.js",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "bin/**/*",
+      "assets/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!**/*.md"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "${productName} ${version}"
+    }
+  },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-    "electron": "^43.1.1",
     "node-pty": "^1.1.0"
+  },
+  "optionalDependencies": {
+    "electron": "^43.1.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "electron-builder": "^26.15.3",
     "playwright-core": "^1.61.1"
   }
 }

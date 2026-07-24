@@ -7,6 +7,7 @@ import { TYPES, typeInfo, randomWorkspaceName, randomTerminalName } from './pres
 
 const $ = (sel) => document.querySelector(sel);
 const isWin = window.termivin.platform === 'win32';
+const isMac = window.termivin.platform === 'darwin';
 
 const STATUS_LABEL = {
   saved: 'saved',
@@ -311,7 +312,9 @@ export function renderHeader() {
   $('#ws-restore-btn').classList.toggle('hidden', !ws || !anySaved);
   const anyOpen = ws && ws.terminals.filter((t) => !t.minimized).length > 1;
   $('#arrange-btn').classList.toggle('hidden', !anyOpen);
-  $('#attach-window-btn').classList.toggle('hidden', !isWin);
+  const attachBtn = $('#attach-window-btn');
+  attachBtn.classList.toggle('hidden', !(isWin || isMac));
+  if (isMac) attachBtn.textContent = '⧉ Adopt terminal';
 }
 
 // Tile all open (non-minimized) terminals of the active workspace into a
@@ -1044,7 +1047,13 @@ function setupAttachModal() {
 export function openAttachModal(termId) {
   attachTargetTermId = termId;
   attachArmed = true;
-  $('#attach-overlay').classList.remove('hidden');
+  const overlay = $('#attach-overlay');
+  if (!isWin) {
+    overlay.querySelector('.modal-title').textContent = 'Adopt terminal session';
+    overlay.querySelector('.attach-note').textContent =
+      'Pick a running terminal below to re-open it inside Termivin at its current folder. Press Esc to cancel.';
+  }
+  overlay.classList.remove('hidden');
   syncExternalRects();
   loadAttachList();
 }
@@ -1075,7 +1084,9 @@ async function loadAttachList() {
   list.innerHTML = '';
   const free = items.filter((w) => !usedHwnds.has(w.hwnd));
   if (!free.length) {
-    list.appendChild(el('div', 'attach-loading', 'No console windows found. Tick "Show all windows" to list everything.'));
+    list.appendChild(el('div', 'attach-loading', isWin
+      ? 'No console windows found. Tick "Show all windows" to list everything.'
+      : 'No terminal sessions found. Tick "Show all" to list every process on a tty.'));
     return;
   }
   for (const w of free) {
@@ -1088,7 +1099,38 @@ async function loadAttachList() {
   }
 }
 
+// macOS can't embed windows, so "adopting" a terminal means re-opening it as a
+// managed terminal in the same folder (agents resume their last session).
+async function adoptMacTerminal(w) {
+  const ws = S.activeWorkspace();
+  if (!ws) return null;
+  closeAttachModal();
+  const kind = w.kind === 'claude' || w.kind === 'codex' ? w.kind : 'shell';
+  const info = typeInfo(kind);
+  const name = kind === 'shell'
+    ? ((w.cwd && w.cwd.split('/').filter(Boolean).pop()) || 'Shell')
+    : info.label;
+  const meta = S.addTerminal(ws.id, {
+    name: String(name).slice(0, 28) || 'Terminal',
+    type: kind,
+    cwd: w.cwd || undefined,
+    command: info.command,
+    restoreCommand: info.restoreCommand,
+    autoRestore: true,
+  });
+  ws.view = 'canvas';
+  S.scheduleSave();
+  renderAll();
+  await new Promise((r) => requestAnimationFrame(r));
+  await TM.spawnTerminal(meta, { useRestore: true });
+  renderAll();
+  TM.focusTerminal(meta.id);
+  attachTargetTermId = null;
+  return meta.id;
+}
+
 async function doAttach(w) {
+  if (!isWin) return adoptMacTerminal(w);
   const ws = S.activeWorkspace();
   if (!ws) return;
   closeAttachModal();

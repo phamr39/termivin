@@ -1,12 +1,36 @@
-const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const os = require('os');
+
+// node-pty's macOS/Linux `spawn-helper` prebuilt binary loses its executable
+// bit when the package is unpacked from an npm tarball. node-pty execs that
+// helper to launch shells, so without +x every pty.spawn dies with
+// "posix_spawnp failed" — terminals never start. Windows uses conpty and has
+// no such helper, which is why this only bites on macOS/Linux. Restore the bit
+// before requiring node-pty so the fix applies on a clean install too.
+function ensurePtyHelperExecutable() {
+  if (process.platform === 'win32') return;
+  try {
+    const root = path.dirname(require.resolve('node-pty/package.json'));
+    const candidates = [
+      path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+      path.join(root, 'build', 'Release', 'spawn-helper'),
+    ];
+    for (const helper of candidates) {
+      if (!fs.existsSync(helper)) continue;
+      if ((fs.statSync(helper).mode & 0o111) === 0) {
+        fs.chmodSync(helper, 0o755);
+      }
+    }
+  } catch {}
+}
 
 let pty = null;
 let ptyLoadError = null;
 try {
+  ensurePtyHelperExecutable();
   pty = require('node-pty');
 } catch (err) {
   ptyLoadError = String(err && err.message ? err.message : err);
@@ -41,7 +65,20 @@ function writeState(state) {
   }
 }
 
+// macOS ignores BrowserWindow's `icon`; the Dock icon comes from the app
+// bundle, so a dev/`npx electron .` run shows the generic Electron icon. Set it
+// explicitly at runtime so Termivin's logo appears on the Dock either way.
+function setMacDockIcon() {
+  if (process.platform !== 'darwin' || !app.dock) return;
+  try {
+    const img = nativeImage.createFromPath(
+      path.join(__dirname, '..', 'assets', 'termivin-logo.png'));
+    if (!img.isEmpty()) app.dock.setIcon(img);
+  } catch {}
+}
+
 function createWindow() {
+  setMacDockIcon();
   win = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -245,7 +282,102 @@ function parentHwnd() {
   return buf.length >= 8 ? Number(buf.readBigUInt64LE(0)) : buf.readUInt32LE(0);
 }
 
+// ---------- macOS: adopt external terminal sessions --------------------------
+// macOS has no cross-app window reparenting (no SetParent equivalent), so we
+// can't embed windows like on Windows. Instead we enumerate real terminal
+// *sessions* by process and resolve each one's working directory, letting the
+// renderer re-open it as a managed terminal in the same folder.
+
+function macProcCwd(pid) {
+  try {
+    const out = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    for (const line of out.split('\n')) {
+      if (line[0] === 'n') return line.slice(1).trim();
+    }
+  } catch {}
+  return null;
+}
+
+function macListTerminals(all) {
+  let out;
+  try {
+    out = execFileSync('ps', ['-axo', 'pid=,ppid=,tty=,args='], {
+      encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+    });
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+  const procs = [];
+  for (const raw of out.split('\n')) {
+    const m = raw.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+    if (m) procs.push({ pid: +m[1], ppid: +m[2], tty: m[3], args: m[4] });
+  }
+  // Termivin's own managed ptys also have controlling ttys — exclude anything
+  // in our process subtree so we don't offer to adopt our own terminals.
+  const byPid = new Map(procs.map((p) => [p.pid, p]));
+  const isOurs = (pid) => {
+    let cur = pid;
+    for (let i = 0; cur && i < 100; i++) {
+      if (cur === process.pid) return true;
+      const p = byPid.get(cur);
+      if (!p) return false;
+      cur = p.ppid;
+    }
+    return false;
+  };
+  const isAgentP = (p) => /\b(claude|codex)\b/i.test(p.args);
+  const isShellP = (p) => /(^|\/)-?(zsh|bash|fish|ksh|tcsh|sh)(\s|$)/i.test(p.args);
+  const isLoginP = (p) => /(^|\/)login(\s|$)/i.test(p.args);
+  const onTty = procs.filter((p) => /^tty/.test(p.tty) && !isOurs(p.pid));
+  const groups = new Map();
+  for (const p of onTty) {
+    if (!groups.has(p.tty)) groups.set(p.tty, []);
+    groups.get(p.tty).push(p);
+  }
+  // Pick the process that represents each terminal (one tty == one pane).
+  // Agents (claude/codex) win over the shell that launched them, and both win
+  // over helper subprocesses like sourcekit-lsp/caffeinate that would otherwise
+  // be the deepest leaf. Falls back to the leaf only when "show all" is on.
+  const result = [];
+  for (const [tty, group] of groups) {
+    const agents = group.filter(isAgentP);
+    const shells = group.filter(isShellP);
+    let pick, kind;
+    if (agents.length) {
+      pick = agents.find((p) => {
+        const par = byPid.get(p.ppid);
+        return par && (isShellP(par) || isLoginP(par));
+      }) || agents[0];
+      kind = /\bcodex\b/i.test(pick.args) ? 'codex' : 'claude';
+    } else if (shells.length) {
+      pick = shells[shells.length - 1];
+      kind = 'shell';
+    } else if (all) {
+      const parents = new Set(group.map((p) => p.ppid));
+      pick = group.filter((p) => !parents.has(p.pid)).pop() || group[group.length - 1];
+      kind = 'shell';
+    } else {
+      continue;
+    }
+    const cwd = macProcCwd(pick.pid);
+    const cmd = path.basename(pick.args.split(/\s+/)[0].replace(/^-/, ''));
+    result.push({
+      pid: pick.pid,
+      tty,
+      proc: kind === 'shell' ? (cmd || 'shell') : kind,
+      title: cwd || pick.args,
+      cwd: cwd || null,
+      kind,
+    });
+  }
+  result.sort((a, b) => a.proc.localeCompare(b.proc) || (a.title || '').localeCompare(b.title || ''));
+  return { ok: true, result };
+}
+
 ipcMain.handle('external:list', async (event, all) => {
+  if (process.platform === 'darwin') return macListTerminals(!!all);
   return embedCall('list', { all: !!all, excludePid: process.pid });
 });
 
@@ -292,6 +424,10 @@ ipcMain.handle('external:close', async (event, hwnd) => {
 });
 
 ipcMain.handle('external:cwds', async (event, pid) => {
+  if (process.platform === 'darwin') {
+    const cwd = macProcCwd(pid);
+    return { ok: true, result: cwd ? [{ name: 'cwd', cwd }] : [] };
+  }
   return embedCall('cwds', { pid }, 15000);
 });
 

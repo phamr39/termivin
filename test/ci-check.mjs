@@ -66,10 +66,13 @@ for (const f of [
   else fail('missing ' + f);
 }
 
-if (pkg.dependencies && pkg.dependencies.electron) {
-  ok('electron is a runtime dependency (global installs work)');
+// electron must ship with `npm i -g termivin` so the bin can find its binary,
+// but electron-builder refuses to package when electron is in "dependencies".
+// optionalDependencies satisfies both: npm still installs it globally.
+if (pkg.optionalDependencies?.electron || pkg.dependencies?.electron) {
+  ok('electron is an install-time dependency (global installs work)');
 } else {
-  fail('electron must be in "dependencies" or `npm i -g termivin` breaks');
+  fail('electron must be in "dependencies" or "optionalDependencies" or `npm i -g termivin` breaks');
 }
 
 if (pkg.bin && pkg.bin.termivin === 'bin/termivin.js') ok('bin entry present');
