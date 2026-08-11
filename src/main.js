@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execFileSync } = require('child_process');
@@ -35,6 +35,8 @@ try {
 } catch (err) {
   ptyLoadError = String(err && err.message ? err.message : err);
 }
+
+const bus = require('./agent-bus');
 
 let win = null;
 const ptys = new Map(); // termId -> IPty
@@ -108,13 +110,29 @@ function createWindow() {
   });
   // Start the Win32 helper eagerly so the drop-to-attach hook is live
   ensureEmbedHelper();
+  // Agent bus: loopback only, token in the env of every spawned terminal.
+  bus.start(app.getPath('userData'), (evt) => {
+    if (win && !win.isDestroyed()) win.webContents.send('bus:event', evt);
+  });
 }
 
 // ---------- PTY IPC ----------
 
+function busEnv(termId, spaceId, name) {
+  const { url, token } = bus.info();
+  if (!url) return {};
+  return {
+    TERMIVIN_URL: url,
+    TERMIVIN_TOKEN: token,
+    TERMIVIN_AGENT: termId,
+    TERMIVIN_SPACE: spaceId || '',
+    TERMIVIN_NAME: name || '',
+  };
+}
+
 ipcMain.handle('pty:create', (event, opts) => {
   if (!pty) return { ok: false, error: 'node-pty is not available: ' + ptyLoadError };
-  const { id, shell, args = [], cwd, command, cols = 80, rows = 24 } = opts;
+  const { id, shell, args = [], cwd, command, cols = 80, rows = 24, space, name } = opts;
 
   // If a pty with this id is still alive, kill it first
   const existing = ptys.get(id);
@@ -130,7 +148,13 @@ ipcMain.handle('pty:create', (event, opts) => {
       cols,
       rows,
       cwd: cwd && fs.existsSync(cwd) ? cwd : app.getPath('home'),
-      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        // Agent bus credentials — an agent needs no config beyond these.
+        ...busEnv(id, space, name),
+      },
     });
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
@@ -180,6 +204,14 @@ ipcMain.on('pty:kill', (event, id) => {
     ptys.delete(id);
   }
 });
+
+// ---------- Agent bus ----------
+
+// The renderer owns terminal status, so it pushes the roster on every render
+// and status change; the bus uses it for peer lookup and workspace scoping.
+ipcMain.on('bus:roster', (event, list) => bus.setRoster(list));
+ipcMain.handle('bus:info', () => bus.info());
+ipcMain.handle('bus:pending', (event, termId) => bus.pendingCount(termId));
 
 // ---------- State persistence ----------
 
@@ -474,11 +506,69 @@ ipcMain.handle('claude:recent-projects', () => {
 
 // ---------- Dialogs ----------
 
-ipcMain.handle('dialog:pick-folder', async () => {
-  const res = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
+ipcMain.handle('dialog:pick-folder', async (event, defaultPath) => {
+  // Without defaultPath, Windows opens wherever the shell last browsed (often
+  // Downloads) instead of the folder already typed in the field.
+  const opts = { properties: ['openDirectory'] };
+  if (defaultPath && fs.existsSync(defaultPath)) opts.defaultPath = defaultPath;
+  const res = await dialog.showOpenDialog(win, opts);
   if (res.canceled || !res.filePaths.length) return null;
   return res.filePaths[0];
 });
+
+// ---------- Reveal a terminal's folder ----------
+
+ipcMain.handle('os:open-folder', async (event, dir) => {
+  if (!dir || !fs.existsSync(dir)) return { ok: false, error: 'Folder not found: ' + (dir || '(none)') };
+  const err = await shell.openPath(dir); // '' on success
+  return err ? { ok: false, error: err } : { ok: true };
+});
+
+// The VS Code CLI is a shim script (`code.cmd` on Windows), and since Node 20
+// spawn() refuses .cmd/.bat unless a shell runs it — so resolve it first and
+// only then hand it to a shell, rather than guessing and failing silently.
+function findEditorCmd() {
+  const isWin = process.platform === 'win32';
+  const finder = isWin ? 'where' : 'which';
+  for (const name of isWin ? ['code.cmd', 'code'] : ['code']) {
+    try {
+      execFileSync(finder, [name], { stdio: ['ignore', 'ignore', 'ignore'] });
+      return name;
+    } catch {}
+  }
+  return null;
+}
+
+ipcMain.handle('os:open-editor', async (event, dir) => {
+  if (!dir || !fs.existsSync(dir)) return { ok: false, error: 'Folder not found: ' + (dir || '(none)') };
+  const cmd = findEditorCmd();
+  if (!cmd) {
+    return {
+      ok: false,
+      error: "VS Code's `code` command isn't on your PATH. In VS Code run "
+        + '"Shell Command: Install \'code\' command in PATH" and try again.',
+    };
+  }
+  return await new Promise((resolve) => {
+    const child = spawn(cmd, [`"${dir}"`], {
+      detached: true,
+      stdio: 'ignore',
+      shell: true,
+      windowsHide: true,
+    });
+    child.once('error', (err) => resolve({ ok: false, error: err.message }));
+    child.once('spawn', () => {
+      child.unref();
+      resolve({ ok: true });
+    });
+  });
+});
+
+// ---------- Clipboard ----------
+// xterm has no clipboard access of its own; the renderer asks us instead.
+
+ipcMain.handle('clipboard:read', () => clipboard.readText());
+ipcMain.on('clipboard:write', (event, text) => clipboard.writeText(String(text ?? '')));
 
 // ---------- App lifecycle ----------
 
@@ -507,6 +597,7 @@ app.on('window-all-closed', () => {
 
 let detachDone = false;
 app.on('before-quit', (event) => {
+  bus.stop();
   for (const p of ptys.values()) {
     try { p.kill(); } catch {}
   }

@@ -668,7 +668,39 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
   outline: none;
   min-width: 80px;
   width: 130px;
+  /* Tab bars and pane bars set user-select:none, which the input inherits and
+     which stops you selecting the text you are trying to rename. */
+  user-select: text;
+  -webkit-user-select: text;
 }
+
+/* ⋯ menu on a pane bar. Lives on <body> so a pane's overflow can't clip it. */
+.pane-menu {
+  position: fixed;
+  z-index: 110;
+  min-width: 186px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.pane-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  padding: 6px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane-menu-item:hover { background: var(--accent-soft); color: var(--text); }
+.pane-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
 
 /* drop-to-attach toast */
 .drop-toast {

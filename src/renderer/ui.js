@@ -3,7 +3,7 @@
 
 import * as S from './state.js';
 import * as TM from './term-manager.js';
-import { TYPES, typeInfo, randomWorkspaceName, randomTerminalName } from './presets.js';
+import { TYPES, typeInfo, isAgentType, randomWorkspaceName, randomTerminalName } from './presets.js';
 
 const $ = (sel) => document.querySelector(sel);
 const isWin = window.termivin.platform === 'win32';
@@ -32,12 +32,26 @@ function inlineRename(span, current, onDone) {
   input.type = 'text';
   input.value = current;
   span.replaceWith(input);
+
+  // This input always lands inside chrome built for dragging, and both drag
+  // mechanisms make it unusable: a pane bar calls preventDefault() on mousedown
+  // (which kills the caret and starts moving the pane instead), and a tab is
+  // draggable="true" (which swallows text selection). Neutralise both for as
+  // long as the input is on screen.
+  const dragParent = input.closest('[draggable="true"]');
+  if (dragParent) dragParent.draggable = false;
+  const swallow = (e) => e.stopPropagation();
+  for (const type of ['mousedown', 'mouseup', 'click', 'dblclick']) {
+    input.addEventListener(type, swallow);
+  }
+
   input.focus();
   input.select();
   let finished = false;
   const finish = (commit) => {
     if (finished) return;
     finished = true;
+    if (dragParent) dragParent.draggable = true;
     // Put the original span back — not every caller rebuilds its DOM.
     span.textContent = commit && input.value.trim() ? input.value.trim() : current;
     input.replaceWith(span);
@@ -150,6 +164,184 @@ async function closeOrRemoveTerminal(termId) {
 // Clone a terminal: open the new-terminal dialog prefilled with the source's
 // cwd, commands and settings so the user can tweak before creating. The name
 // placeholder is a fresh pool name that doesn't collide with the source.
+// ------------------------------------------------------------- agent bus
+
+// Push the live roster (who exists, in which workspace, and what state they
+// are in) to the bus. It is the bus's only source of truth for peer lookup,
+// so this must run on every render and status change.
+export function syncBusRoster() {
+  const state = S.getState();
+  if (!state) return;
+  const list = [];
+  for (const ws of state.workspaces) {
+    for (const t of ws.terminals) {
+      if (t.external) continue; // external windows have no shell to run the CLI
+      list.push({
+        termId: t.id,
+        spaceId: ws.id,
+        spaceName: ws.name,
+        name: t.name,
+        type: t.type,
+        status: TM.getStatus(t.id),
+      });
+    }
+  }
+  window.termivin.busRoster(list);
+}
+
+// The prompt the 🔗 button types into an agent. It carries the workspace name
+// and current peers so the agent knows who it is joining, and tells it to poll
+// at task boundaries — agents have no event loop and will otherwise never
+// check for mail.
+//
+// Deliberately ONE line: a newline is a submit in every terminal, so a
+// multi-line prompt gets chopped into fragments — and in a shell it drops into
+// a continuation prompt and eats the rest.
+function connectPrompt(ws, self, peers) {
+  const others = peers.length
+    ? peers.map((p) => `${p.name} (${p.type})`).join(', ')
+    : 'none yet, you are the first';
+  return [
+    `You are agent "${self.name}" in the Termivin workspace "${ws.name}",`,
+    'which has a local message bus the agents here use to talk to each other.',
+    `Peers right now: ${others}.`,
+    'Join it by running: termivin register --role "<one line: what you are working on and which files you own>".',
+    'Then: `termivin who` lists your teammates;',
+    '`termivin send <name> "..."` messages one agent (use @all to broadcast, add --ask for a question);',
+    '`termivin recv --wait 60` blocks up to 60s waiting for messages.',
+    'Run `termivin recv` whenever you finish a task or are about to wait on something —',
+    'nothing pushes messages into your session, so unread mail sits there until you look.',
+    'Do not reply to broadcasts unless the message asks you to.',
+  ].join(' ');
+}
+
+async function connectAgent(termId) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  const { ws, meta } = found;
+
+  const status = TM.getStatus(termId);
+  if (status === 'approval') {
+    // Enter means "yes" at a permission prompt (see approvalKeys); typing here
+    // would approve whatever is being asked.
+    await uiAlert(
+      `"${meta.name}" is waiting for your approval. Answer that prompt first — ` +
+      'typing now would submit an answer to it.',
+      { title: 'Cannot connect yet' }
+    );
+    return;
+  }
+  if (status !== 'idle' && status !== 'working') {
+    await uiAlert(
+      `"${meta.name}" is not running (${STATUS_LABEL[status] || status}). Start it first.`,
+      { title: 'Cannot connect yet' }
+    );
+    return;
+  }
+
+  // Plain shells sit on the bus too (handy for inspecting it by hand), but
+  // they are not agents — don't introduce them as teammates.
+  const peers = ws.terminals.filter((t) => t.id !== termId && !t.external && isAgentType(t.type));
+  const ok = await uiConfirm(
+    `Type the bus connection prompt into "${meta.name}"?\n\n` +
+    `It will be asked to register itself in workspace "${ws.name}"` +
+    (peers.length ? ` alongside ${peers.length} other agent(s).` : ' as the first agent.'),
+    { title: 'Connect to agent bus', okLabel: 'Type it' }
+  );
+  if (!ok) return;
+
+  // Send the prompt as one paste-like write, then Enter separately so a CLI
+  // that reflows multi-line input has a frame to settle.
+  TM.sendKeys(termId, connectPrompt(ws, meta, peers));
+  setTimeout(() => TM.sendKeys(termId, '\r'), 120);
+  TM.focusTerminal(termId);
+}
+
+// --------------------------------------------------- pane "more" menu (⋯)
+// The pane bar has no room left, and these actions are occasional rather than
+// per-second, so they live behind one button instead of five.
+
+let paneMenuTermId = null;
+let paneMenuOutside = null;
+
+function closePaneMenu() {
+  document.querySelectorAll('.pane-menu').forEach((m) => m.remove());
+  paneMenuTermId = null;
+  if (paneMenuOutside) {
+    window.removeEventListener('mousedown', paneMenuOutside, true);
+    paneMenuOutside = null;
+  }
+}
+
+function startPaneRename(termId) {
+  const rt = TM.getRuntime(termId);
+  const found = S.findTerminal(termId);
+  if (!rt || !found) return;
+  const nameEl = rt.pane.querySelector('.pane-name');
+  if (!nameEl) return;
+  inlineRename(nameEl, found.meta.name, (val) => {
+    if (val) S.renameTerminal(termId, val);
+    renderTabs();
+    renderDashboard();
+    updatePanes();
+  });
+}
+
+async function revealFolder(dir) {
+  const res = await window.termivin.openFolder(dir);
+  if (!res.ok) await uiAlert(res.error, { title: 'Could not open folder' });
+}
+
+async function openInEditor(dir) {
+  const res = await window.termivin.openInEditor(dir);
+  if (!res.ok) await uiAlert(res.error, { title: 'Could not open VS Code' });
+}
+
+function openPaneMenu(termId, anchor) {
+  const reopening = paneMenuTermId === termId;
+  closePaneMenu();
+  if (reopening) return; // the ⋯ button toggles
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  const { meta } = found;
+
+  const menu = el('div', 'pane-menu');
+  const add = (label, fn) => {
+    const item = el('button', 'pane-menu-item', label);
+    item.addEventListener('click', () => {
+      closePaneMenu();
+      fn();
+    });
+    menu.appendChild(item);
+  };
+
+  add('✎   Rename…', () => startPaneRename(termId));
+  if (!meta.external) {
+    add('↻   Refresh view', () => TM.refreshTerminal(termId));
+    add('🧹  Clear scrollback', () => TM.clearScrollback(termId));
+  }
+  menu.appendChild(el('div', 'pane-menu-sep'));
+  const cwd = meta.cwd || window.termivin.homedir;
+  add('📁  Open folder', () => revealFolder(cwd));
+  add('⌨   Open in VS Code', () => openInEditor(cwd));
+
+  document.body.appendChild(menu);
+  paneMenuTermId = termId;
+
+  // Right-align under the button, but never off-screen.
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  menu.style.left = Math.max(6, Math.min(r.right - w, window.innerWidth - w - 6)) + 'px';
+  menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 6) + 'px';
+
+  // Ignore mousedowns on a ⋯ button so the toggle above gets its turn.
+  paneMenuOutside = (e) => {
+    if (menu.contains(e.target) || e.target.closest('.pane-more')) return;
+    closePaneMenu();
+  };
+  window.addEventListener('mousedown', paneMenuOutside, true);
+}
+
 function cloneTerminal(termId) {
   const found = S.findTerminal(termId);
   if (!found || found.meta.external || found.meta.type === 'external') return;
@@ -915,6 +1107,8 @@ function setupCanvasInteractions() {
     const termId = pane.dataset.termId;
     if (e.target.closest('.pane-max')) toggleFullscreen(termId);
     else if (e.target.closest('.pane-min')) minimizeTerminal(termId);
+    else if (e.target.closest('.pane-connect')) connectAgent(termId);
+    else if (e.target.closest('.pane-more')) openPaneMenu(termId, e.target.closest('.pane-more'));
     else if (e.target.closest('.pane-clone')) cloneTerminal(termId);
     else if (e.target.closest('.pane-close')) closeOrRemoveTerminal(termId);
   });
@@ -936,6 +1130,10 @@ function setupCanvasInteractions() {
     } else {
       toggleFullscreen(pane.dataset.termId);
     }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && paneMenuTermId) closePaneMenu();
   });
 }
 
@@ -1205,7 +1403,8 @@ function setupConvertModal() {
     if (e.target === $('#convert-overlay')) closeConvertModal();
   });
   $('#cv-browse').addEventListener('click', async () => {
-    const dir = await window.termivin.pickFolder();
+    // Start the picker at whatever is already typed, not the OS default.
+    const dir = await window.termivin.pickFolder($('#cv-cwd').value.trim());
     if (dir) $('#cv-cwd').value = dir;
   });
   $('#cv-create').addEventListener('click', doConvert);
@@ -1550,6 +1749,7 @@ export function updateLive() {
 export function onTerminalStatusChanged(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
+  syncBusRoster();
   renderSidebarBadges();
   const ws = S.activeWorkspace();
   if (ws && found.ws.id === ws.id) {
@@ -1582,7 +1782,9 @@ export function setupModal() {
   typeSel.addEventListener('change', applyPreset);
 
   $('#nt-browse').addEventListener('click', async () => {
-    const dir = await window.termivin.pickFolder();
+    // Start the picker at whatever is already typed (a cloned terminal
+    // prefills its source folder), not wherever Explorer last was.
+    const dir = await window.termivin.pickFolder($('#nt-cwd').value.trim());
     if (dir) $('#nt-cwd').value = dir;
   });
 
@@ -1663,6 +1865,7 @@ export function renderAll() {
   renderHeader();
   renderTabs();
   renderContent();
+  syncBusRoster();
 }
 
 export function setupChrome() {

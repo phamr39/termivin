@@ -10,7 +10,8 @@ const fail = (m) => {
   process.exitCode = 1;
 };
 
-const cdp = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const PORT = process.argv[2] || '9222';
+const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
 const page = cdp.contexts()[0].pages().find((p) => p.url().includes('index.html')) || cdp.contexts()[0].pages()[0];
 page.on('dialog', (d) => d.accept());
 await page.waitForSelector('.ws-item', { timeout: 10000 });

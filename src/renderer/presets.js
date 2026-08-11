@@ -50,6 +50,15 @@ export const TYPES = {
   },
 };
 
+// Terminal types that run an AI agent rather than a bare shell. Only these get
+// the agent-bus connect button and count as peers: typing a prompt into a
+// plain shell just executes it as a command.
+const AGENT_TYPES = ['claude', 'codex', 'custom'];
+
+export function isAgentType(type) {
+  return AGENT_TYPES.includes(type);
+}
+
 export function typeInfo(type) {
   if (type === 'external') {
     return { label: 'External window', command: '', restoreCommand: '', color: '#e8a13c', icon: '⧉' };

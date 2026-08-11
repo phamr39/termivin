@@ -2,6 +2,7 @@
 // Usage: `npm run start:debug`, then `node test/smoke.mjs`.
 
 import { chromium } from 'playwright-core';
+import { readFile } from 'fs/promises';
 
 const ok = (m) => console.log('PASS  ' + m);
 const fail = (m) => {
@@ -9,7 +10,8 @@ const fail = (m) => {
   process.exitCode = 1;
 };
 
-const cdp = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const PORT = process.argv[2] || '9222';
+const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
 const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 page.on('dialog', (d) => d.accept());
@@ -140,6 +142,7 @@ else fail('no running badge in sidebar');
 
 // --- stop terminal from dashboard -----------------------------------------
 await page.click('.card .btn-danger-text');
+await acceptDialog(); // Stop asks for confirmation via the themed dialog
 await page.waitForTimeout(1500);
 const pill3 = (await page.textContent('.card .status-pill')).trim();
 if (pill3 === 'exited' || pill3 === 'saved') ok('stop works, card status: ' + pill3);
@@ -157,8 +160,12 @@ await page.waitForTimeout(300);
 const wsNames = await page.evaluate(() =>
   [...document.querySelectorAll('.ws-item .ws-name')].map((e) => e.textContent.trim())
 );
-const POOL = ['Riverside', 'The Harmony', 'Symphony', 'Green Villas', 'Green Bay', 'Skylake',
-  'Smart City', 'West Point', 'Metropolis', 'Gardenia', 'Times City', 'Royal City', 'Ocean Park'];
+// Read the pool from presets.js rather than duplicating it: a hardcoded copy
+// silently drifts and makes this check fail whenever a newly added name is
+// the one the randomiser picks.
+const presets = await readFile(new URL('../src/renderer/presets.js', import.meta.url), 'utf8');
+const POOL = [...presets.match(/WORKSPACE_NAMES = \[([^\]]*)\]/s)[1].matchAll(/'([^']+)'/g)]
+  .map((m) => m[1]);
 const newWs = wsNames.find((n) => POOL.some((p) => n.startsWith(p)));
 if (newWs) ok('new workspace got a themed name: ' + newWs);
 else fail('workspace names: ' + JSON.stringify(wsNames));

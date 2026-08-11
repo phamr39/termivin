@@ -7,6 +7,7 @@
 
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
+const bus = require('../src/bus-client');
 
 const root = path.join(__dirname, '..');
 const pkg = require(path.join(root, 'package.json'));
@@ -32,6 +33,12 @@ Usage:
 Commands:
   (none)            Launch the Termivin app
   update            Update Termivin to the latest published version
+
+Agent bus (run these from inside a Termivin terminal):
+  register          Join the workspace bus     --role "..." [--skills a,b]
+  who               List the agents in this workspace
+  send <to> <text>  Message an agent by name, or "@all"   [--ask] [--subject S]
+  recv              Read waiting messages      [--wait <seconds, max 60>]
 
 Options:
   -h, --help        Show this help and exit
@@ -106,4 +113,10 @@ function main() {
   return launch();
 }
 
-process.exit(main());
+// Agent-bus subcommands talk to the running app over HTTP, so they are async;
+// everything else stays synchronous.
+if (bus.isBusCommand(cmd)) {
+  bus.run(argv).then((code) => process.exit(code));
+} else {
+  process.exit(main());
+}

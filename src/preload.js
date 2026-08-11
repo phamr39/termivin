@@ -13,11 +13,22 @@ contextBridge.exposeInMainWorld('termivin', {
   onPtyData: (cb) => ipcRenderer.on('pty:data', (e, id, data) => cb(id, data)),
   onPtyExit: (cb) => ipcRenderer.on('pty:exit', (e, id, code) => cb(id, code)),
 
+  busInfo: () => ipcRenderer.invoke('bus:info'),
+  busRoster: (list) => ipcRenderer.send('bus:roster', list),
+  busPending: (termId) => ipcRenderer.invoke('bus:pending', termId),
+  onBusEvent: (cb) => ipcRenderer.on('bus:event', (e, evt) => cb(evt)),
+
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: (state) => ipcRenderer.invoke('state:save', state),
   saveStateSync: (state) => ipcRenderer.sendSync('state:save-sync', state),
 
-  pickFolder: () => ipcRenderer.invoke('dialog:pick-folder'),
+  pickFolder: (defaultPath) => ipcRenderer.invoke('dialog:pick-folder', defaultPath),
+
+  openFolder: (dir) => ipcRenderer.invoke('os:open-folder', dir),
+  openInEditor: (dir) => ipcRenderer.invoke('os:open-editor', dir),
+
+  clipboardRead: () => ipcRenderer.invoke('clipboard:read'),
+  clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),
 
   externalList: (all) => ipcRenderer.invoke('external:list', all),
   externalAttach: (opts) => ipcRenderer.invoke('external:attach', opts),

@@ -3,7 +3,7 @@
 // Metadata lives in state.js; this module owns everything that only exists
 // while the app is running. Pane positioning/interaction lives in ui.js.
 
-import { defaultShell, detectApproval, approvalKeys, typeInfo } from './presets.js';
+import { defaultShell, detectApproval, approvalKeys, typeInfo, isAgentType } from './presets.js';
 import { findTerminal, scheduleSave } from './state.js';
 
 const runtimes = new Map(); // termId -> rt
@@ -38,6 +38,7 @@ export function ensureRuntime(meta) {
 
   const info = typeInfo(meta.type);
   const isExternal = !!meta.external || meta.type === 'external';
+  const isAgent = !isExternal && isAgentType(meta.type);
   const pane = document.createElement('div');
   pane.className = 'pane hidden';
   pane.dataset.termId = meta.id;
@@ -47,7 +48,9 @@ export function ensureRuntime(meta) {
       <span class="pane-icon" style="color:${info.color}">${info.icon}</span>
       <span class="pane-name"></span>
       <span class="pane-spacer"></span>
+      ${isAgent ? '<button class="pane-btn pane-connect" title="Connect this agent to the workspace bus">🔗</button>' : ''}
       ${isExternal ? '' : '<button class="pane-btn pane-clone" title="Clone terminal (same folder & commands)">❐</button>'}
+      <button class="pane-btn pane-more" title="More actions">⋯</button>
       <button class="pane-btn pane-min" title="Minimize to dock">−</button>
       <button class="pane-btn pane-max" title="Fullscreen">⛶</button>
       <button class="pane-btn pane-close" title="Close">×</button>
@@ -103,6 +106,50 @@ export function ensureRuntime(meta) {
     });
     xterm.onResize(({ cols, rows }) => {
       if (rt.running) window.termivin.ptyResize(meta.id, cols, rows);
+    });
+
+    // --- clipboard ---------------------------------------------------------
+    // Ctrl+V already works (Electron's default Edit menu pastes into xterm's
+    // helper textarea), but Ctrl+C never reaches the menu: xterm claims it and
+    // sends SIGINT, so a selection can never be copied. Adopt the Windows
+    // Terminal convention — with a selection Ctrl+C copies, without one it
+    // still interrupts — and add the explicit Ctrl+Shift+C/V pair.
+    const copySelection = () => {
+      const text = xterm.getSelection();
+      if (!text) return false;
+      window.termivin.clipboardWrite(text);
+      xterm.clearSelection(); // so the very next Ctrl+C interrupts again
+      return true;
+    };
+    const pasteClipboard = async () => {
+      const text = await window.termivin.clipboardRead();
+      if (text) xterm.paste(text); // xterm.paste respects bracketed-paste mode
+    };
+    rt.copySelection = copySelection;
+    rt.pasteClipboard = pasteClipboard;
+
+    const isMac = window.termivin.platform === 'darwin';
+    xterm.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+      if (!(isMac ? e.metaKey : e.ctrlKey)) return true;
+      const key = (e.key || '').toLowerCase();
+      if (key === 'c' && (e.shiftKey || xterm.hasSelection())) {
+        copySelection();
+        return false;
+      }
+      if (key === 'v' && e.shiftKey) {
+        pasteClipboard();
+        return false;
+      }
+      return true;
+    });
+
+    // Mouse-only path, same convention: right-click copies a selection,
+    // otherwise it pastes.
+    rt.body.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (xterm.hasSelection()) copySelection();
+      else pasteClipboard();
     });
 
     // Refit whenever the floating pane is resized.
@@ -228,6 +275,7 @@ export async function spawnTerminal(meta, { useRestore = false } = {}) {
     rt.protectScrollbackUntil = Date.now() + 4000;
   }
 
+  const found = findTerminal(meta.id);
   const res = await window.termivin.ptyCreate({
     id: meta.id,
     shell,
@@ -235,6 +283,9 @@ export async function spawnTerminal(meta, { useRestore = false } = {}) {
     command,
     cols: rt.xterm.cols,
     rows: rt.xterm.rows,
+    // Agent-bus identity, injected into the shell's environment.
+    space: found ? found.ws.id : null,
+    name: meta.name,
   });
 
   if (!res.ok) {
@@ -350,6 +401,31 @@ export function fitTerminal(termId) {
   if (rt && rt.fit && !rt.pane.classList.contains('hidden')) {
     try { rt.fit.fit(); } catch {}
   }
+}
+
+// Recover a terminal that has gone sluggish or is drawing garbage after a long
+// session: drop the cached glyph atlas, re-measure against the pane, tell the
+// PTY the size again (so the shell repaints its prompt) and force a repaint.
+export function refreshTerminal(termId) {
+  const rt = runtimes.get(termId);
+  if (!rt || !rt.xterm) return false;
+  try { rt.xterm.clearTextureAtlas?.(); } catch {}
+  try { rt.fit.fit(); } catch {}
+  if (rt.running) window.termivin.ptyResize(termId, rt.xterm.cols, rt.xterm.rows);
+  try { rt.xterm.refresh(0, rt.xterm.rows - 1); } catch {}
+  rt.xterm.scrollToBottom();
+  rt.xterm.focus();
+  return true;
+}
+
+// The actual cure when a terminal has slowed down — 8000 lines of scrollback is
+// a lot of state to keep live. Keeps the visible screen, drops the history.
+export function clearScrollback(termId) {
+  const rt = runtimes.get(termId);
+  if (!rt || !rt.xterm) return false;
+  rt.xterm.clear();
+  refreshTerminal(termId);
+  return true;
 }
 
 export function fitAllVisible() {
