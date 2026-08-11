@@ -1,7 +1,7 @@
 {
   "name": "termivin",
   "productName": "Termivin",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Workspace manager for terminals, optimized for AI CLI clients (Claude Code, Codex)",
   "keywords": [
     "terminal",
@@ -29,6 +29,10 @@
     "start:debug": "electron . --remote-debugging-port=9222",
     "test": "node test/ci-check.mjs",
     "test:e2e": "node test/smoke.mjs",
+    "test:bus": "node test/bus.mjs",
+    "test:bus-ui": "node test/bus-ui.mjs 9223",
+    "test:features": "node test/features.mjs 9223",
+    "start:dev": "electron . --user-data-dir=.dev-profile --remote-debugging-port=9223",
     "test:restore": "node test/restore.mjs",
     "test:external": "node test/external.mjs",
     "test:rename": "node test/rename.mjs",
