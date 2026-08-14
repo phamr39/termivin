@@ -104,15 +104,11 @@ if (extHasClone === null) ok('no external terminal to check (skipped)');
 else if (extHasClone === false) ok('external pane has no clone button');
 else fail('external pane shows a clone button');
 
-// 3. dashboard Clone opens the same dialog; Esc cancels without creating
-await page.click('#view-toggle .seg-btn[data-view="dashboard"]');
-await page.waitForTimeout(500);
-await page.evaluate((srcId) => {
-  const card = document.querySelector(`.card[data-term-id="${srcId}"]`) || document.querySelector('.card');
-  [...card.querySelectorAll('.btn')].find((b) => b.textContent.includes('Clone')).click();
-}, src.id);
+// 3. reopening the clone dialog and pressing Esc must not create a terminal
+// (the dashboard is a bus map now — clone lives on the pane's ❐ button)
+await page.click(`.pane[data-term-id="${src.id}"] .pane-clone`);
 await page.waitForSelector('#modal-overlay:not(.hidden)', { timeout: 3000 });
-ok('dashboard Clone opens the dialog');
+ok('pane ❐ opens the clone dialog again');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
 const finalCount = await page.evaluate((wsId) =>

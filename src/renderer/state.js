@@ -26,13 +26,16 @@ export async function loadState() {
   if (!state.workspaces.find((w) => w.id === state.activeWorkspaceId)) {
     state.activeWorkspaceId = state.workspaces[0].id;
   }
+  if (state.appView !== 'home' && state.appView !== 'ws') state.appView = 'ws';
   for (const ws of state.workspaces) {
     if (!ws.view || ws.view === 'terminals') ws.view = 'canvas';
     if (!('fullscreenTerminalId' in ws)) ws.fullscreenTerminalId = null;
     if (!Array.isArray(ws.terminals)) ws.terminals = [];
+    if (!ws.dockCollapsed || typeof ws.dockCollapsed !== 'object') ws.dockCollapsed = {};
     ws.terminals.forEach((t, i) => {
       if (!t.layout) t.layout = defaultLayout(i);
       if (!('minimized' in t)) t.minimized = false;
+      if (!('dockGroup' in t)) t.dockGroup = null;
       // external panes must stay fully inside the canvas (their embedded
       // native window cannot be clipped by the DOM)
       if (t.external) {
@@ -87,7 +90,7 @@ export function saveNowSync() {
 // --- Workspaces -----------------------------------------------------------
 
 export function addWorkspace(name) {
-  const ws = { id: uid('ws'), name, view: 'canvas', activeTerminalId: null, fullscreenTerminalId: null, terminals: [] };
+  const ws = { id: uid('ws'), name, view: 'canvas', activeTerminalId: null, fullscreenTerminalId: null, terminals: [], dockCollapsed: {} };
   state.workspaces.push(ws);
   state.activeWorkspaceId = ws.id;
   scheduleSave();
@@ -161,6 +164,7 @@ export function addTerminal(wsId, meta) {
     restoreCommand: meta.restoreCommand || '',
     autoRestore: meta.autoRestore !== false,
     minimized: false,
+    dockGroup: null,
     savedTail: [],
     layout: defaultLayout(ws.terminals.length),
     external: meta.external || null, // { pid, hwnd, title } for attached OS windows

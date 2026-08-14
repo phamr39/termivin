@@ -12,7 +12,7 @@ const fail = (m) => {
   process.exitCode = 1;
 };
 
-const cdp = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[2] || '9222'}`);
 const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 page.on('dialog', (d) => d.accept());

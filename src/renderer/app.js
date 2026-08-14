@@ -13,6 +13,9 @@ async function main() {
   TM.initPtyEvents();
   TM.onStatusChange((termId) => UI.onTerminalStatusChanged(termId));
 
+  const verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = 'Termivin v' + (window.termivin.version || '?');
+
   UI.setupModal();
   UI.setupChrome();
   UI.renderAll();

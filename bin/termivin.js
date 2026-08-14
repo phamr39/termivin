@@ -37,8 +37,11 @@ Commands:
 Agent bus (run these from inside a Termivin terminal):
   register          Join the workspace bus     --role "..." [--skills a,b]
   who               List the agents in this workspace
-  send <to> <text>  Message an agent by name, or "@all"   [--ask] [--subject S]
+  send <to> <text>  Message an agent by name, "@all", or "#topic"  [--ask] [--subject S]
   recv              Read waiting messages      [--wait <seconds, max 60>]
+  topics            List cross-workspace topics
+  topic <name>      Create a topic here        [--rep <agent-name>]
+                    (its representative speaks for this workspace to the outside)
 
 Options:
   -h, --help        Show this help and exit

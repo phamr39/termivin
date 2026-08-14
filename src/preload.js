@@ -4,6 +4,7 @@ const os = require('os');
 contextBridge.exposeInMainWorld('termivin', {
   platform: process.platform,
   homedir: os.homedir(),
+  version: require('../package.json').version,
 
   ptyCreate: (opts) => ipcRenderer.invoke('pty:create', opts),
   ptyWrite: (id, data) => ipcRenderer.send('pty:write', id, data),
@@ -16,7 +17,14 @@ contextBridge.exposeInMainWorld('termivin', {
   busInfo: () => ipcRenderer.invoke('bus:info'),
   busRoster: (list) => ipcRenderer.send('bus:roster', list),
   busPending: (termId) => ipcRenderer.invoke('bus:pending', termId),
+  busStats: () => ipcRenderer.invoke('bus:stats'),
+  busTopicCreate: (opts) => ipcRenderer.invoke('bus:topic-create', opts),
+  busTopicUpdate: (id, patch) => ipcRenderer.invoke('bus:topic-update', id, patch),
+  busTopicDelete: (id) => ipcRenderer.invoke('bus:topic-delete', id),
   onBusEvent: (cb) => ipcRenderer.on('bus:event', (e, evt) => cb(evt)),
+
+  statsSample: (terms) => ipcRenderer.invoke('stats:sample', terms),
+  tokenUsage: () => ipcRenderer.invoke('usage:tokens'),
 
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: (state) => ipcRenderer.invoke('state:save', state),

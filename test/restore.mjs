@@ -1,5 +1,8 @@
-// E2E restore test: run AFTER smoke.mjs left a terminal in the saved state
-// and the app has been restarted. Verifies the restore banner and restore-all.
+// E2E restore test: run AFTER the app has been restarted with at least one
+// managed terminal in the saved state. The active workspace auto-restores on
+// startup (no banner since the auto-restore rework) — this verifies the
+// terminal comes back running, replays the previous-session tail, and is
+// interactive.
 
 import { chromium } from 'playwright-core';
 
@@ -9,28 +12,30 @@ const fail = (m) => {
   process.exitCode = 1;
 };
 
-const cdp = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[2] || '9222'}`);
 const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 page.on('dialog', (d) => d.accept());
 
-await page.waitForSelector('.ws-item', { timeout: 10000 });
+await page.waitForSelector('#workspace-list .ws-item', { timeout: 10000 });
 
-if (await page.isVisible('#restore-banner')) ok('restore banner shown after relaunch');
-else fail('restore banner not visible');
-
-const bannerText = await page.textContent('#restore-banner .restore-text');
-ok('banner says: ' + bannerText.trim());
-
-await page.click('#restore-all-btn');
-await page.waitForTimeout(4000);
-
-// last session may have ended in dashboard view — switch back to canvas
-await page.click('#view-toggle .seg-btn[data-view="canvas"]');
+// make sure we are looking at the workspace canvas
+await page.evaluate(() => {
+  const { S } = window.__termivin;
+  S.getState().appView = 'ws';
+  S.activeWorkspace().view = 'canvas';
+});
+await page.click('#workspace-list .ws-item');
 await page.waitForTimeout(500);
 
-const dot = await page.getAttribute('.tab .dot', 'class');
-if (dot.includes('st-working') || dot.includes('st-idle')) ok('restored terminal is running (' + dot + ')');
+// wait for auto-restore to spawn the saved terminals
+let dot = '';
+for (let i = 0; i < 20; i++) {
+  await page.waitForTimeout(1000);
+  dot = (await page.getAttribute('.tab .dot', 'class').catch(() => '')) || '';
+  if (dot.includes('st-working') || dot.includes('st-idle')) break;
+}
+if (dot.includes('st-working') || dot.includes('st-idle')) ok('auto-restore spawned the terminal (' + dot + ')');
 else fail('restored terminal dot: ' + dot);
 
 // the replay marker is in scrollback (xterm renders only the viewport) —

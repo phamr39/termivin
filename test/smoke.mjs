@@ -23,7 +23,24 @@ const acceptDialog = async () => {
 };
 
 await page.waitForSelector('.ws-item', { timeout: 10000 });
-ok('workspace sidebar renders: ' + (await page.textContent('.ws-item .ws-name')).trim());
+
+// Start from a clean slate so pane counts below are deterministic: drop every
+// terminal, keep one workspace on canvas, leave Home.
+await page.evaluate(() => {
+  const { S, TM } = window.__termivin;
+  for (const ws of [...S.getState().workspaces]) {
+    for (const t of [...ws.terminals]) {
+      TM.disposeTerminal(t.id);
+      S.removeTerminal(t.id);
+    }
+  }
+  const state = S.getState();
+  state.appView = 'ws';
+  state.workspaces[0].view = 'canvas';
+});
+await page.reload();
+await page.waitForSelector('#workspace-list .ws-item', { timeout: 10000 });
+ok('workspace sidebar renders: ' + (await page.textContent('#workspace-list .ws-item .ws-name')).trim());
 
 // --- create a plain shell terminal ---------------------------------------
 await page.click('#new-terminal-btn');
@@ -112,45 +129,51 @@ const tabDot = await page.getAttribute('.tab .dot', 'class');
 if (tabDot.includes('st-approval')) ok('approval detected on tab dot');
 else fail('tab dot is: ' + tabDot);
 
-// --- dashboard ------------------------------------------------------------
+// --- dashboard (bus map + management side panel) --------------------------
 await page.click('#view-toggle .seg-btn[data-view="dashboard"]');
-await page.waitForSelector('.card', { timeout: 4000 });
-ok('dashboard renders card');
+await page.waitForSelector('.wsdash', { timeout: 5000 });
+ok('dashboard renders map + side panel');
 
-await page.waitForTimeout(1600);
-const pill = (await page.textContent('.card .status-pill')).trim();
-if (pill === 'needs approval') ok('card shows "needs approval"');
-else fail('card status pill: ' + pill);
+await page.waitForTimeout(2200);
+const mapChips = await page.evaluate(() => document.querySelectorAll('#wsmap-canvas .bm-node').length);
+if (mapChips === 1) ok('map shows the terminal as a chip');
+else fail('map chips: ' + mapChips);
 
-const preview = await page.textContent('.card .card-preview');
-if (preview.includes('Do you want to proceed?')) ok('card preview shows terminal tail');
-else fail('preview: ' + JSON.stringify(preview.slice(0, 200)));
+const tilesTxt = await page.evaluate(() =>
+  [...document.querySelectorAll('.side-tile')].map((t) => t.textContent.trim()).join(' '));
+if (/1\s*approval/.test(tilesTxt)) ok('side tiles count the approval');
+else fail('side tiles: ' + tilesTxt);
 
-if (await page.isVisible('.card .approval-bar')) {
-  await page.click('.card .btn-approve');
+if (await page.isVisible('.side-row-approval .btn-approve')) {
+  await page.click('.side-row-approval .btn-approve');
   await page.waitForTimeout(1800);
-  const pill2 = (await page.textContent('.card .status-pill')).trim();
-  if (pill2 !== 'needs approval') ok('approve clears approval state (now: ' + pill2 + ')');
+  const stillApproval = await page.evaluate(() =>
+    !!document.querySelector('.side-row-approval'));
+  if (!stillApproval) ok('approve from the side panel clears the approval');
   else fail('approval state did not clear');
 } else {
-  fail('approval bar not visible on card');
+  fail('approval quick-actions not visible in side panel');
 }
 
-const badge = await page.textContent('.ws-item .badge-run').catch(() => null);
+const badge = await page.textContent('#workspace-list .ws-item .badge-run').catch(() => null);
 if (badge) ok('sidebar shows running badge: ' + badge.trim());
 else fail('no running badge in sidebar');
 
-// --- stop terminal from dashboard -----------------------------------------
-await page.click('.card .btn-danger-text');
-await acceptDialog(); // Stop asks for confirmation via the themed dialog
+// --- stop the process from the pane ⋯ menu --------------------------------
+await page.click('#view-toggle .seg-btn[data-view="canvas"]');
+await page.waitForTimeout(600);
+await page.click('.pane:not(.hidden) .pane-more');
+await page.waitForSelector('.pane-menu');
+await page.evaluate(() => {
+  const item = [...document.querySelectorAll('.pane-menu-item')]
+    .find((b) => b.textContent.includes('Stop process'));
+  item.click();
+});
+await acceptDialog();
 await page.waitForTimeout(1500);
-const pill3 = (await page.textContent('.card .status-pill')).trim();
-if (pill3 === 'exited' || pill3 === 'saved') ok('stop works, card status: ' + pill3);
-else fail('after stop, card status: ' + pill3);
-
-const actions = await page.textContent('.card .card-actions');
-if (actions.includes('Start') || actions.includes('Resume')) ok('restart/resume actions available');
-else fail('card actions: ' + actions);
+const overlayLabel = await page.textContent('.pane:not(.hidden) .pane-overlay').catch(() => '');
+if (/exited|Not running/i.test(overlayLabel)) ok('stop from ⋯ menu works: ' + overlayLabel.trim().split('\n')[0]);
+else fail('after stop, overlay: ' + JSON.stringify(overlayLabel.slice(0, 80)));
 
 // --- workspace placeholder names ------------------------------------------
 await page.click('#new-workspace-btn');

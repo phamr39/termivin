@@ -37,6 +37,8 @@ try {
 }
 
 const bus = require('./agent-bus');
+const procStats = require('./proc-stats');
+const tokenUsage = require('./token-usage');
 
 let win = null;
 const ptys = new Map(); // termId -> IPty
@@ -99,6 +101,23 @@ function createWindow() {
     },
   });
   win.setMenuBarVisibility(false);
+  if (process.platform === 'win32') {
+    // The taskbar resolves an AUMID's icon through window app-details and the
+    // installed shortcut carrying the same AUMID. Without both, dev/CLI runs
+    // fall back to the generic electron.exe icon.
+    const iconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+    const appRoot = path.join(__dirname, '..');
+    try {
+      win.setAppDetails({
+        appId: 'com.termivin.app',
+        appIconPath: iconPath,
+        appIconIndex: 0,
+        relaunchCommand: `"${process.execPath}" "${appRoot}"`,
+        relaunchDisplayName: 'Termivin',
+      });
+    } catch {}
+    ensureStartMenuShortcut(iconPath, appRoot);
+  }
   win.webContents.on('console-message', (e) => {
     if (e.level === 'error' || e.level === 'warning') {
       console.log(`[renderer:${e.level}] ${e.message}`);
@@ -114,6 +133,22 @@ function createWindow() {
   bus.start(app.getPath('userData'), (evt) => {
     if (win && !win.isDestroyed()) win.webContents.send('bus:event', evt);
   });
+}
+
+// Best-effort, async: write/update the Start Menu shortcut that gives our
+// AUMID an icon (see src/win-shortcut.ps1). Never blocks startup.
+function ensureStartMenuShortcut(iconPath, appRoot) {
+  try {
+    const child = spawn('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(__dirname, 'win-shortcut.ps1'),
+      '-Target', process.execPath,
+      '-AppArgs', appRoot,
+      '-Icon', iconPath,
+      '-Aumid', 'com.termivin.app',
+    ], { stdio: 'ignore', windowsHide: true, detached: true });
+    child.unref();
+  } catch {}
 }
 
 // ---------- PTY IPC ----------
@@ -212,6 +247,37 @@ ipcMain.on('pty:kill', (event, id) => {
 ipcMain.on('bus:roster', (event, list) => bus.setRoster(list));
 ipcMain.handle('bus:info', () => bus.info());
 ipcMain.handle('bus:pending', (event, termId) => bus.pendingCount(termId));
+ipcMain.handle('bus:stats', () => bus.stats());
+ipcMain.handle('bus:topic-create', (event, opts) =>
+  bus.createTopic(opts.name, opts.spaceId, opts.repId || null));
+ipcMain.handle('bus:topic-update', (event, id, patch) => bus.updateTopic(id, patch));
+ipcMain.handle('bus:topic-delete', (event, id) => bus.deleteTopic(id));
+
+// ---------- Resource + token usage (dashboards) ----------
+
+// terms: [{ termId, pid? }] — managed terminals resolve their pty pid here;
+// external ones pass the pid captured at attach.
+ipcMain.handle('stats:sample', async (event, terms) => {
+  const roots = [];
+  for (const t of terms || []) {
+    const proc = ptys.get(t.termId);
+    const pid = proc ? proc.pid : t.pid;
+    if (pid) roots.push({ key: t.termId, pid });
+  }
+  try {
+    return await procStats.sample(roots);
+  } catch (err) {
+    return { byKey: {}, app: null, sys: null, error: String(err.message || err) };
+  }
+});
+
+ipcMain.handle('usage:tokens', () => {
+  try {
+    return tokenUsage.usage();
+  } catch (err) {
+    return { error: String(err.message || err) };
+  }
+});
 
 // ---------- State persistence ----------
 

@@ -143,7 +143,7 @@ async function send(argv) {
   const [to, ...rest] = positional;
   const text = rest.join(' ');
   if (!to || !text) {
-    console.error('Usage: termivin send <agent-name|@all> "message" [--ask] [--subject S]');
+    console.error('Usage: termivin send <agent-name|@all|#topic> "message" [--ask] [--subject S]');
     return 1;
   }
   const res = await request('POST', '/publish', {
@@ -153,10 +153,43 @@ async function send(argv) {
     subject: flag(argv, 'subject', ''),
     corr: flag(argv, 'corr', null),
   });
-  console.log(`Sent to: ${res.delivered.join(', ')}`);
+  console.log(`Sent to: ${res.delivered.join(', ')}` + (res.topic ? ` (topic #${res.topic})` : ''));
   if (argv.includes('--ask')) {
     console.log('This was a question. Replies arrive via `termivin recv` — keep working meanwhile.');
   }
+  return 0;
+}
+
+function renderTopic(t) {
+  const rep = t.effectiveRepName || '(no live agent)';
+  const own = t.repName && t.repName !== t.effectiveRepName ? ` (configured: ${t.repName})` : '';
+  return `  #${t.name.padEnd(18)} workspace "${t.spaceName || '?'}" · ${t.members} agent(s) · rep: ${rep}${own}`;
+}
+
+async function topicsCmd() {
+  const res = await request('GET', '/topics');
+  if (!res.topics.length) {
+    console.log('No topics yet. Create one with: termivin topic <name>');
+    return 0;
+  }
+  console.log('Topics (send with: termivin send "#<name>" "..."):\n');
+  for (const t of res.topics) console.log(renderTopic(t));
+  console.log('\nInside the topic\'s workspace a message reaches every agent;');
+  console.log('from other workspaces it reaches only the representative.');
+  return 0;
+}
+
+async function topicCmd(argv) {
+  const name = argv[1];
+  if (!name || name.startsWith('--')) {
+    console.error('Usage: termivin topic <name> [--rep <agent-name>]   (creates a topic in this workspace)');
+    return 1;
+  }
+  const res = await request('POST', '/topics', { name, rep: flag(argv, 'rep', null) });
+  const t = res.topic;
+  console.log(`Created topic #${t.name} in workspace "${t.spaceName}".`);
+  console.log(`Representative (speaks for this workspace to the outside): ${t.effectiveRepName}.`);
+  console.log(`Agents in other workspaces can reach it with: termivin send "#${t.name}" "..."`);
   return 0;
 }
 
@@ -171,7 +204,7 @@ async function recv(argv) {
   return 0;
 }
 
-const COMMANDS = { register, who, send, recv };
+const COMMANDS = { register, who, send, recv, topics: topicsCmd, topic: topicCmd };
 
 function isBusCommand(cmd) {
   return Object.prototype.hasOwnProperty.call(COMMANDS, cmd);

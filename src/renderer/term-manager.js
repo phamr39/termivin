@@ -148,8 +148,16 @@ export function ensureRuntime(meta) {
     // otherwise it pastes.
     rt.body.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      if (xterm.hasSelection()) copySelection();
-      else pasteClipboard();
+      if (xterm.hasSelection()) {
+        copySelection();
+        return;
+      }
+      // When the app in the terminal captures the mouse (Claude Code sets
+      // mouse tracking "any"), xterm has already reported this right-click to
+      // it — and Claude Code pastes the clipboard by itself on right-click.
+      // Pasting here too would insert the text twice, so defer to the app.
+      if (xterm.modes.mouseTrackingMode !== 'none') return;
+      pasteClipboard();
     });
 
     // Refit whenever the floating pane is resized.

@@ -4,6 +4,13 @@
 import * as S from './state.js';
 import * as TM from './term-manager.js';
 import { TYPES, typeInfo, isAgentType, randomWorkspaceName, randomTerminalName } from './presets.js';
+import { initDashData, onBusEvent } from './dash-data.js';
+import {
+  initWorkspaceDashboard, renderWorkspaceDashboard, refreshWorkspaceDashboard, pulseWorkspaceMap,
+} from './dashboard.js';
+import {
+  initHome, renderHome, refreshHome, pulseHomeMap, isHome, updatePeek, closePeek,
+} from './home.js';
 
 const $ = (sel) => document.querySelector(sel);
 const isWin = window.termivin.platform === 'win32';
@@ -88,6 +95,7 @@ function ensureDialogEl() {
     <div class="modal dialog-box">
       <div class="modal-title dialog-title"></div>
       <div class="dialog-message"></div>
+      <input type="text" class="dialog-input hidden" />
       <div class="modal-actions">
         <button class="btn btn-ghost dialog-cancel">Cancel</button>
         <button class="btn btn-primary dialog-ok">OK</button>
@@ -98,16 +106,19 @@ function ensureDialogEl() {
   return overlay;
 }
 
-function showDialog(message, { title = 'Termivin', okLabel = 'OK', cancelLabel = 'Cancel', danger = false, alertOnly = false } = {}) {
+function showDialog(message, { title = 'Termivin', okLabel = 'OK', cancelLabel = 'Cancel', danger = false, alertOnly = false, prompt = false, initial = '' } = {}) {
   const overlay = ensureDialogEl();
   const okBtn = overlay.querySelector('.dialog-ok');
   const cancelBtn = overlay.querySelector('.dialog-cancel');
+  const input = overlay.querySelector('.dialog-input');
   overlay.querySelector('.dialog-title').textContent = title;
   overlay.querySelector('.dialog-message').textContent = message;
   okBtn.textContent = okLabel;
   okBtn.className = 'btn dialog-ok ' + (danger ? 'btn-danger' : 'btn-primary');
   cancelBtn.textContent = cancelLabel;
   cancelBtn.classList.toggle('hidden', alertOnly);
+  input.classList.toggle('hidden', !prompt);
+  input.value = prompt ? initial : '';
   overlay.classList.remove('hidden');
   syncExternalRects();
 
@@ -116,7 +127,8 @@ function showDialog(message, { title = 'Termivin', okLabel = 'OK', cancelLabel =
       overlay.classList.add('hidden');
       okBtn.onclick = cancelBtn.onclick = overlay.onclick = overlay.onkeydown = null;
       syncExternalRects();
-      resolve(val);
+      // prompt mode resolves with the typed string (or null on cancel)
+      resolve(prompt ? (val ? input.value.trim() : null) : val);
     };
     okBtn.onclick = () => done(true);
     cancelBtn.onclick = () => done(false);
@@ -127,12 +139,18 @@ function showDialog(message, { title = 'Termivin', okLabel = 'OK', cancelLabel =
       if (e.key === 'Escape') done(false);
       if (e.key === 'Enter') done(true);
     };
-    okBtn.focus();
+    if (prompt) {
+      input.focus();
+      input.select();
+    } else {
+      okBtn.focus();
+    }
   });
 }
 
 export const uiConfirm = (message, opts = {}) => showDialog(message, opts);
 export const uiAlert = (message, opts = {}) => showDialog(message, { ...opts, alertOnly: true });
+export const uiPrompt = (message, opts = {}) => showDialog(message, { ...opts, prompt: true });
 
 async function closeOrRemoveTerminal(termId) {
   const found = S.findTerminal(termId);
@@ -208,7 +226,8 @@ function connectPrompt(ws, self, peers) {
     'Join it by running: termivin register --role "<one line: what you are working on and which files you own>".',
     'Then: `termivin who` lists your teammates;',
     '`termivin send <name> "..."` messages one agent (use @all to broadcast, add --ask for a question);',
-    '`termivin recv --wait 60` blocks up to 60s waiting for messages.',
+    '`termivin recv --wait 60` blocks up to 60s waiting for messages;',
+    '`termivin topics` lists cross-workspace topics — message one with: termivin send "#topic" "...".',
     'Run `termivin recv` whenever you finish a task or are about to wait on something —',
     'nothing pushes messages into your session, so unread mail sits there until you look.',
     'Do not reply to broadcasts unless the message asks you to.',
@@ -319,6 +338,15 @@ function openPaneMenu(termId, anchor) {
   if (!meta.external) {
     add('↻   Refresh view', () => TM.refreshTerminal(termId));
     add('🧹  Clear scrollback', () => TM.clearScrollback(termId));
+    if (TM.isRunning(termId)) {
+      add('■   Stop process', async () => {
+        if (await uiConfirm(`Stop the process in "${meta.name}"? The terminal stays in the workspace.`,
+            { title: 'Stop process', okLabel: 'Stop', danger: true })) {
+          TM.stopTerminal(termId);
+          renderAll();
+        }
+      });
+    }
   }
   menu.appendChild(el('div', 'pane-menu-sep'));
   const cwd = meta.cwd || window.termivin.homedir;
@@ -372,9 +400,10 @@ export function renderSidebar() {
   const list = $('#workspace-list');
   list.innerHTML = '';
   const state = S.getState();
+  $('#home-item').classList.toggle('active', isHome());
 
   for (const ws of state.workspaces) {
-    const item = el('div', 'ws-item' + (ws.id === state.activeWorkspaceId ? ' active' : ''));
+    const item = el('div', 'ws-item' + (!isHome() && ws.id === state.activeWorkspaceId ? ' active' : ''));
     item.dataset.wsId = ws.id;
     item.draggable = true;
 
@@ -401,7 +430,9 @@ export function renderSidebar() {
 
     item.addEventListener('click', (e) => {
       if (e.target === del || e.target === ren) return;
-      if (ws.id === S.getState().activeWorkspaceId) return; // keep DOM stable so dblclick-rename works
+      const wasHome = isHome();
+      if (!wasHome && ws.id === S.getState().activeWorkspaceId) return; // keep DOM stable so dblclick-rename works
+      S.getState().appView = 'ws';
       S.setActiveWorkspace(ws.id);
       renderAll();
       autoRestoreWorkspace(ws.id); // first visit after startup revives saved terminals
@@ -426,6 +457,13 @@ export function renderSidebar() {
       if (!(await uiConfirm(msg, { title: 'Delete workspace', okLabel: 'Delete', danger: true }))) return;
       const orphans = S.removeWorkspace(ws.id);
       for (const t of orphans) TM.disposeTerminal(t.id);
+      // topics anchored to this workspace have no home anymore — drop them
+      try {
+        const stats = await window.termivin.busStats();
+        for (const t of stats.topics.filter((t) => t.spaceId === ws.id)) {
+          await window.termivin.busTopicDelete(t.id);
+        }
+      } catch {}
       renderAll();
     });
 
@@ -493,19 +531,22 @@ function renderSidebarBadges() {
 // ---------------------------------------------------------------- header
 
 export function renderHeader() {
+  const home = isHome();
   const ws = S.activeWorkspace();
-  $('#ws-title').textContent = ws ? ws.name : '';
+  $('#ws-title').textContent = home ? 'Overview' : ws ? ws.name : '';
+  $('#view-toggle').classList.toggle('hidden', home);
+  $('#new-terminal-btn').classList.toggle('hidden', home);
 
   for (const btn of document.querySelectorAll('#view-toggle .seg-btn')) {
-    btn.classList.toggle('active', ws && btn.dataset.view === ws.view);
+    btn.classList.toggle('active', !home && ws && btn.dataset.view === ws.view);
   }
 
-  const anySaved = ws && ws.terminals.some((t) => !t.external && !TM.isRunning(t.id));
+  const anySaved = !home && ws && ws.terminals.some((t) => !t.external && !TM.isRunning(t.id));
   $('#ws-restore-btn').classList.toggle('hidden', !ws || !anySaved);
-  const anyOpen = ws && ws.terminals.filter((t) => !t.minimized).length > 1;
+  const anyOpen = !home && ws && ws.terminals.filter((t) => !t.minimized).length > 1;
   $('#arrange-btn').classList.toggle('hidden', !anyOpen);
   const attachBtn = $('#attach-window-btn');
-  attachBtn.classList.toggle('hidden', !(isWin || isMac));
+  attachBtn.classList.toggle('hidden', home || !(isWin || isMac));
   if (isMac) attachBtn.textContent = '⧉ Adopt terminal';
 }
 
@@ -684,6 +725,18 @@ export function renderContent() {
   const tabwrap = $('#tabbar-wrap');
   const content = $('#content');
 
+  if (isHome()) {
+    dash.classList.add('hidden');
+    tabwrap.classList.add('hidden');
+    empty.classList.add('hidden');
+    hideAllPanes();
+    renderHome();
+    renderDock();
+    syncExternalRects();
+    return;
+  }
+  $('#home').classList.add('hidden');
+
   const allRts = () => {
     const ids = new Set();
     for (const w of S.getState().workspaces) for (const t of w.terminals) ids.add(t.id);
@@ -729,6 +782,7 @@ export function renderContent() {
   for (const t of ws.terminals) {
     const rt = TM.ensureRuntime(t);
     const pane = rt.pane;
+    if (pane.classList.contains('peeked')) continue; // owned by the peek overlay
     if (fsId) {
       pane.classList.toggle('fullscreen', t.id === fsId);
       pane.classList.toggle('hidden', t.id !== fsId);
@@ -743,9 +797,12 @@ export function renderContent() {
     maxBtn.title = t.id === fsId ? 'Exit fullscreen' : 'Fullscreen';
   }
 
-  // hide panes belonging to other workspaces
+  // hide panes belonging to other workspaces (a peeked pane stays visible —
+  // it lives in the peek overlay, not on the canvas)
   document.querySelectorAll('#panes .pane').forEach((pane) => {
-    if (!activeIds.has(pane.dataset.termId)) pane.classList.add('hidden');
+    if (!activeIds.has(pane.dataset.termId) && !pane.classList.contains('peeked')) {
+      pane.classList.add('hidden');
+    }
   });
 
   updatePanes();
@@ -755,7 +812,9 @@ export function renderContent() {
 }
 
 function hideAllPanes() {
-  document.querySelectorAll('#panes .pane').forEach((p) => p.classList.add('hidden'));
+  document.querySelectorAll('#panes .pane').forEach((p) => {
+    if (!p.classList.contains('peeked')) p.classList.add('hidden');
+  });
 }
 
 function applyLayout(pane, layout) {
@@ -806,6 +865,32 @@ function restoreMinimized(termId) {
   TM.focusTerminal(termId);
 }
 
+function buildDockChip(t) {
+  const info = typeInfo(t.external ? 'external' : t.type);
+  const st = TM.getStatus(t.id);
+  const chip = el('div', 'dock-chip' + (st === 'approval' ? ' needs-approval' : ''));
+  chip.dataset.termId = t.id;
+  chip.title = `${t.name} — click to restore, right-click to group`;
+  const head = el('div', 'dock-head');
+  const dot = el('span', 'dot st-' + st);
+  const icon = el('span', 'dock-icon', info.icon);
+  icon.style.color = info.color;
+  const name = el('span', 'dock-name', t.name);
+  head.append(dot, icon, name);
+  const preview = el('div', 'dock-preview');
+  setDockPreview(preview, t);
+  chip.append(head, preview);
+  chip.addEventListener('click', () => restoreMinimized(t.id));
+  chip.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openDockChipMenu(t.id, e.clientX, e.clientY);
+  });
+  return chip;
+}
+
+// The status a group header shows: the most urgent status among its members.
+const DOCK_ST_RANK = { approval: 5, working: 4, idle: 3, attached: 3, exited: 2, saved: 1 };
+
 function renderDock() {
   const dock = $('#dock');
   const ws = S.activeWorkspace();
@@ -815,24 +900,159 @@ function renderDock() {
       : [];
   dock.classList.toggle('hidden', !docked.length);
   dock.innerHTML = '';
+  if (!docked.length) return;
+
+  // Grouped chips fold into one dropdown per group; ungrouped chips stay flat.
+  const groups = new Map(); // name -> terminals
+  const loose = [];
   for (const t of docked) {
-    const info = typeInfo(t.external ? 'external' : t.type);
-    const st = TM.getStatus(t.id);
-    const chip = el('div', 'dock-chip' + (st === 'approval' ? ' needs-approval' : ''));
-    chip.dataset.termId = t.id;
-    chip.title = `${t.name} — click to restore`;
-    const head = el('div', 'dock-head');
-    const dot = el('span', 'dot st-' + st);
-    const icon = el('span', 'dock-icon', info.icon);
-    icon.style.color = info.color;
-    const name = el('span', 'dock-name', t.name);
-    head.append(dot, icon, name);
-    const preview = el('div', 'dock-preview');
-    setDockPreview(preview, t);
-    chip.append(head, preview);
-    chip.addEventListener('click', () => restoreMinimized(t.id));
-    dock.appendChild(chip);
+    if (t.dockGroup) {
+      if (!groups.has(t.dockGroup)) groups.set(t.dockGroup, []);
+      groups.get(t.dockGroup).push(t);
+    } else {
+      loose.push(t);
+    }
   }
+
+  for (const [gname, terms] of groups) {
+    const collapsed = !!ws.dockCollapsed[gname];
+    const box = el('div', 'dock-group' + (collapsed ? ' collapsed' : ''));
+    const head = el('div', 'dock-group-head');
+    const chev = el('span', 'dock-group-chev', collapsed ? '›' : '⌄');
+    const label = el('span', 'dock-group-name', gname);
+    const worst = terms.reduce(
+      (a, t) => (DOCK_ST_RANK[TM.getStatus(t.id)] > DOCK_ST_RANK[a] ? TM.getStatus(t.id) : a),
+      'saved');
+    const dot = el('span', 'dot st-' + worst);
+    const count = el('span', 'dock-group-count', String(terms.length));
+    head.append(chev, dot, label, count);
+    head.title = collapsed ? 'Expand group' : 'Collapse group';
+    head.addEventListener('click', () => {
+      ws.dockCollapsed[gname] = !collapsed;
+      S.scheduleSave();
+      renderDock();
+    });
+    head.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openDockGroupMenu(gname, e.clientX, e.clientY);
+    });
+    box.appendChild(head);
+    if (!collapsed) {
+      const body = el('div', 'dock-group-body');
+      for (const t of terms) body.appendChild(buildDockChip(t));
+      box.appendChild(body);
+    }
+    dock.appendChild(box);
+  }
+
+  for (const t of loose) dock.appendChild(buildDockChip(t));
+}
+
+// Right-click menu on a dock chip: assign it to a group (or leave one).
+function openDockChipMenu(termId, x, y) {
+  closePaneMenu();
+  const ws = S.activeWorkspace();
+  const found = S.findTerminal(termId);
+  if (!ws || !found) return;
+  const meta = found.meta;
+
+  const menu = el('div', 'pane-menu');
+  const add = (label, fn, cls = '') => {
+    const item = el('button', 'pane-menu-item' + (cls ? ' ' + cls : ''), label);
+    item.addEventListener('click', () => {
+      closePaneMenu();
+      fn();
+    });
+    menu.appendChild(item);
+  };
+
+  const groupNames = [...new Set(ws.terminals.filter((t) => t.dockGroup).map((t) => t.dockGroup))];
+  for (const g of groupNames) {
+    if (g === meta.dockGroup) continue;
+    add(`📁  Move to "${g}"`, () => {
+      meta.dockGroup = g;
+      S.scheduleSave();
+      renderDock();
+    });
+  }
+  add('📁+  New group…', async () => {
+    const name = await uiPrompt('Name for the new dock group:', {
+      title: 'New group', okLabel: 'Create', initial: '',
+    });
+    if (!name) return;
+    meta.dockGroup = name;
+    delete ws.dockCollapsed[name]; // a brand-new group starts expanded
+    S.scheduleSave();
+    renderDock();
+  });
+  if (meta.dockGroup) {
+    add('⏏   Remove from group', () => {
+      meta.dockGroup = null;
+      S.scheduleSave();
+      renderDock();
+    });
+  }
+  menu.appendChild(el('div', 'pane-menu-sep'));
+  add('⊞   Restore', () => restoreMinimized(termId));
+
+  placeFloatingMenu(menu, x, y);
+}
+
+// Right-click menu on a group header: rename or dissolve the group.
+function openDockGroupMenu(gname, x, y) {
+  closePaneMenu();
+  const ws = S.activeWorkspace();
+  if (!ws) return;
+  const members = () => ws.terminals.filter((t) => t.dockGroup === gname);
+
+  const menu = el('div', 'pane-menu');
+  const add = (label, fn) => {
+    const item = el('button', 'pane-menu-item', label);
+    item.addEventListener('click', () => {
+      closePaneMenu();
+      fn();
+    });
+    menu.appendChild(item);
+  };
+  add('✎   Rename group…', async () => {
+    const name = await uiPrompt('New name for this group:', {
+      title: 'Rename group', okLabel: 'Rename', initial: gname,
+    });
+    if (!name || name === gname) return;
+    for (const t of members()) t.dockGroup = name;
+    if (ws.dockCollapsed[gname]) {
+      ws.dockCollapsed[name] = true;
+      delete ws.dockCollapsed[gname];
+    }
+    S.scheduleSave();
+    renderDock();
+  });
+  add('⊞   Restore all', () => {
+    for (const t of members()) t.minimized = false;
+    S.scheduleSave();
+    renderContent();
+    renderTabs();
+  });
+  add('⏏   Ungroup', () => {
+    for (const t of members()) t.dockGroup = null;
+    delete ws.dockCollapsed[gname];
+    S.scheduleSave();
+    renderDock();
+  });
+  placeFloatingMenu(menu, x, y);
+}
+
+// Shared positioning + outside-click dismissal for context menus opened at a
+// screen point (the ⋯ pane menu positions against its anchor instead).
+function placeFloatingMenu(menu, x, y) {
+  document.body.appendChild(menu);
+  menu.style.left = Math.max(6, Math.min(x, window.innerWidth - menu.offsetWidth - 6)) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 6) + 'px';
+  paneMenuOutside = (e) => {
+    if (menu.contains(e.target)) return;
+    closePaneMenu();
+  };
+  window.addEventListener('mousedown', paneMenuOutside, true);
 }
 
 function setDockPreview(previewEl, t) {
@@ -858,6 +1078,18 @@ function updateDock() {
     const found = S.findTerminal(termId);
     const previewEl = chip.querySelector('.dock-preview');
     if (found && previewEl) setDockPreview(previewEl, found.meta);
+  });
+  // group headers: most urgent member status
+  const ws = S.activeWorkspace();
+  if (!ws) return;
+  document.querySelectorAll('#dock .dock-group').forEach((box) => {
+    const gname = box.querySelector('.dock-group-name')?.textContent;
+    if (!gname) return;
+    const worst = ws.terminals
+      .filter((t) => t.minimized && t.dockGroup === gname)
+      .reduce((a, t) => (DOCK_ST_RANK[TM.getStatus(t.id)] > DOCK_ST_RANK[a] ? TM.getStatus(t.id) : a), 'saved');
+    const dot = box.querySelector('.dock-group-head .dot');
+    if (dot) dot.className = 'dot st-' + worst;
   });
 }
 
@@ -1133,7 +1365,7 @@ function setupCanvasInteractions() {
   });
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && paneMenuTermId) closePaneMenu();
+    if (e.key === 'Escape' && document.querySelector('.pane-menu')) closePaneMenu();
   });
 }
 
@@ -1553,188 +1785,25 @@ function showUndoToast(info, termId) {
 }
 
 // ---------------------------------------------------------------- dashboard
+// The workspace dashboard itself lives in dashboard.js (bus map + management
+// panel); these delegators keep the old call sites working.
 
 export function renderDashboard() {
-  const dash = $('#dashboard');
   const ws = S.activeWorkspace();
   if (!ws || ws.view !== 'dashboard') return;
-  dash.innerHTML = '';
-
-  for (const t of ws.terminals) {
-    dash.appendChild(buildCard(t));
-  }
-  updateDashboard();
-}
-
-function buildCard(t) {
-  const info = typeInfo(t.external ? 'external' : t.type);
-  const card = el('div', 'card');
-  card.dataset.termId = t.id;
-
-  const head = el('div', 'card-head');
-  const icon = el('span', 'type-icon', info.icon);
-  icon.style.color = info.color;
-  const name = el('span', 'card-name', t.name);
-  const pill = el('span', 'status-pill');
-  head.append(icon, name, pill);
-
-  const metaLine = t.external
-    ? `${info.label} · ${t.external.title || ''} (pid ${t.external.pid || '?'})`
-    : `${info.label} · ${shortPath(t.cwd)}`;
-  const meta = el('div', 'card-meta', metaLine);
-
-  const preview = el('pre', 'card-preview');
-
-  const approvalBar = el('div', 'approval-bar hidden');
-  const apHint = el('span', 'approval-hint');
-  const apYes = el('button', 'btn btn-approve btn-sm', '✓ Approve');
-  const apNo = el('button', 'btn btn-deny btn-sm', '✗ Deny');
-  approvalBar.append(apHint, apYes, apNo);
-
-  const actions = el('div', 'card-actions');
-
-  card.append(head, meta, preview, approvalBar, actions);
-
-  name.addEventListener('dblclick', () => {
-    inlineRename(name, t.name, (val) => {
-      if (val) S.renameTerminal(t.id, val);
-      renderTabs();
-      renderDashboard();
-    });
-  });
-
-  apYes.addEventListener('click', () => TM.approve(t.id, true));
-  apNo.addEventListener('click', () => TM.approve(t.id, false));
-
-  buildCardActions(t, actions);
-  return card;
-}
-
-function buildCardActions(t, actions) {
-  actions.innerHTML = '';
-  const st = TM.getStatus(t.id);
-  const ws = S.activeWorkspace();
-
-  const mkBtn = (label, cls, fn) => {
-    const b = el('button', 'btn btn-sm ' + cls, label);
-    b.addEventListener('click', fn);
-    actions.appendChild(b);
-  };
-
-  const openInCanvas = () => {
-    if (!ws) return;
-    ws.activeTerminalId = t.id;
-    ws.view = 'canvas';
-    S.bringToFront(t.id);
-    S.scheduleSave();
-    renderAll();
-    TM.focusTerminal(t.id);
-  };
-
-  if (t.external) {
-    if (st === 'attached') {
-      mkBtn('⤢ Open', 'btn-ghost', openInCanvas);
-      mkBtn(t.minimized ? '⊞ Restore' : '⊟ Minimize', 'btn-ghost', () => {
-        if (t.minimized) restoreMinimized(t.id);
-        else minimizeTerminal(t.id);
-        updateCardFull(t.id);
-      });
-      mkBtn('⇱ Detach', 'btn-ghost', async () => {
-        if (await uiConfirm(`Detach "${t.name}"? The window returns to the desktop.`,
-            { title: 'Detach window', okLabel: 'Detach' })) {
-          detachExternal(t.id, { remove: false });
-        }
-      });
-    } else {
-      mkBtn('⧉ Attach window…', 'btn-primary', () => openAttachModal(t.id));
-      mkBtn('⇄ Convert…', 'btn-ghost', () => openConvertModal(t.id));
-    }
-    mkBtn('🗑 Remove', 'btn-ghost btn-danger-text', () => closeOrRemoveTerminal(t.id));
-    return;
-  }
-
-  if (st === 'saved' || st === 'exited') {
-    if (t.restoreCommand && (st === 'exited' || (t.savedTail && t.savedTail.length))) {
-      mkBtn('↻ Resume', 'btn-primary', async () => {
-        await TM.spawnTerminal(t, { useRestore: true });
-        renderAll();
-      });
-      mkBtn('▶ Fresh start', 'btn-ghost', async () => {
-        await TM.spawnTerminal(t, { useRestore: false });
-        renderAll();
-      });
-    } else {
-      mkBtn('▶ Start', 'btn-primary', async () => {
-        await TM.spawnTerminal(t, { useRestore: false });
-        renderAll();
-      });
-    }
-    mkBtn('❐ Clone', 'btn-ghost', () => cloneTerminal(t.id));
-    mkBtn('🗑 Remove', 'btn-ghost btn-danger-text', () => closeOrRemoveTerminal(t.id));
-  } else {
-    mkBtn('⤢ Open', 'btn-ghost', openInCanvas);
-    mkBtn(t.minimized ? '⊞ Restore' : '⊟ Minimize', 'btn-ghost', () => {
-      if (t.minimized) restoreMinimized(t.id);
-      else minimizeTerminal(t.id);
-      updateCardFull(t.id);
-    });
-    mkBtn('❐ Clone', 'btn-ghost', () => cloneTerminal(t.id));
-    mkBtn('⛶ Fullscreen', 'btn-ghost', () => toggleFullscreen(t.id));
-    mkBtn('■ Stop', 'btn-ghost btn-danger-text', async () => {
-      if (!(await uiConfirm(`Stop the process in "${t.name}"?`, { title: 'Stop process', okLabel: 'Stop', danger: true }))) return;
-      TM.stopTerminal(t.id);
-      updateCardFull(t.id);
-    });
-  }
+  renderWorkspaceDashboard();
 }
 
 export function updateDashboard() {
-  const ws = S.activeWorkspace();
-  if (!ws || ws.view !== 'dashboard') return;
-  for (const t of ws.terminals) {
-    const card = document.querySelector(`.card[data-term-id="${t.id}"]`);
-    if (!card) continue;
-    const st = TM.getStatus(t.id);
-    const pill = card.querySelector('.status-pill');
-    pill.textContent = STATUS_LABEL[st];
-    pill.className = 'status-pill st-' + st;
-    card.classList.toggle('card-approval', st === 'approval');
-
-    const preview = card.querySelector('.card-preview');
-    if (t.external) {
-      preview.textContent = st === 'attached'
-        ? '(external window — output not captured)'
-        : '(external window — not attached)';
-    } else {
-      const lines = TM.getPreview(t.id, 12);
-      const text = lines.length ? lines.join('\n') : '(no output yet)';
-      if (preview.textContent !== text) {
-        preview.textContent = text;
-        preview.scrollTop = preview.scrollHeight;
-      }
-      preview.classList.toggle('preview-stale', st === 'saved');
-    }
-
-    const bar = card.querySelector('.approval-bar');
-    const ap = TM.getApproval(t.id);
-    bar.classList.toggle('hidden', !ap);
-    if (ap) card.querySelector('.approval-hint').textContent = ap.hint;
-  }
+  refreshWorkspaceDashboard();
 }
 
-function updateCardFull(termId) {
-  const card = document.querySelector(`.card[data-term-id="${termId}"]`);
-  const found = S.findTerminal(termId);
-  if (!card || !found) return;
-  buildCardActions(found.meta, card.querySelector('.card-actions'));
-  updateDashboard();
-}
 
 // ---------------------------------------------------------------- live
 
 export function updateLive() {
   const ws = S.activeWorkspace();
-  if (ws) {
+  if (ws && !isHome()) {
     for (const t of ws.terminals) {
       const dot = document.querySelector(`.tab[data-term-id="${t.id}"] .dot`);
       if (dot) dot.className = 'dot st-' + TM.getStatus(t.id);
@@ -1744,6 +1813,8 @@ export function updateLive() {
   updatePanes();
   updateDock();
   updateDashboard();
+  refreshHome();
+  updatePeek();
 }
 
 export function onTerminalStatusChanged(termId) {
@@ -1756,7 +1827,7 @@ export function onTerminalStatusChanged(termId) {
     const dot = document.querySelector(`.tab[data-term-id="${termId}"] .dot`);
     if (dot) dot.className = 'dot st-' + TM.getStatus(termId);
     updatePanes();
-    updateCardFull(termId);
+    updateDashboard();
     renderHeader();
   }
 }
@@ -1868,9 +1939,57 @@ export function renderAll() {
   syncBusRoster();
 }
 
+// Jump to a workspace from anywhere (home map, dashboard, peek header).
+export function switchWorkspace(wsId) {
+  closePeek();
+  const state = S.getState();
+  state.appView = 'ws';
+  S.setActiveWorkspace(wsId);
+  renderAll();
+  autoRestoreWorkspace(wsId);
+}
+
+// Open one terminal on its workspace's canvas, focused.
+export function openInCanvas(termId) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  S.getState().appView = 'ws';
+  S.setActiveWorkspace(found.ws.id);
+  found.ws.view = 'canvas';
+  found.ws.activeTerminalId = termId;
+  if (found.meta.minimized) found.meta.minimized = false;
+  S.bringToFront(termId);
+  S.scheduleSave();
+  renderAll();
+  TM.focusTerminal(termId);
+}
+
 export function setupChrome() {
+  initDashData();
+  const uiHooks = {
+    openInCanvas,
+    switchWorkspace,
+    renderAll,
+    uiPrompt,
+    uiConfirm,
+    uiAlert,
+  };
+  initWorkspaceDashboard(uiHooks);
+  initHome(uiHooks);
+  onBusEvent((evt) => {
+    pulseWorkspaceMap(evt);
+    pulseHomeMap(evt);
+  });
+
+  $('#home-item').addEventListener('click', () => {
+    S.getState().appView = 'home';
+    S.scheduleSave();
+    renderAll();
+  });
+
   $('#new-workspace-btn').addEventListener('click', () => {
     const names = S.getState().workspaces.map((w) => w.name);
+    S.getState().appView = 'ws';
     S.addWorkspace(randomWorkspaceName(names));
     renderAll();
     const item = document.querySelector(`.ws-item[data-ws-id="${S.getState().activeWorkspaceId}"] .ws-name`);

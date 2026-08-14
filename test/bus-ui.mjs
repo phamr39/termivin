@@ -23,7 +23,22 @@ const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 
 await page.waitForSelector('.ws-item', { timeout: 15000 });
-const wsName = (await page.textContent('.ws-item .ws-name')).trim();
+
+// start clean: earlier suites leave terminals behind, and the counts below
+// assume exactly the three terminals this test creates
+await page.evaluate(() => {
+  const { S, TM } = window.__termivin;
+  for (const ws of [...S.getState().workspaces]) {
+    for (const t of [...ws.terminals]) {
+      TM.disposeTerminal(t.id);
+      S.removeTerminal(t.id);
+    }
+  }
+  S.getState().appView = 'ws';
+});
+await page.reload();
+await page.waitForSelector('#workspace-list .ws-item', { timeout: 15000 });
+const wsName = (await page.textContent('#workspace-list .ws-item .ws-name')).trim();
 ok('window is up, workspace: ' + wsName);
 
 // --- the bus started with the app ----------------------------------------

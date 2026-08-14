@@ -86,9 +86,27 @@ attack surface:
 | --- | --- | --- |
 | `POST /register` | agent | `{role, skills}` — identity comes from the env |
 | `GET /agents` | agent | peers in the same workspace, with live status |
-| `POST /publish` | agent | `{to, kind, subject, body, corr}`; `to` may be `@all` |
+| `POST /publish` | agent | `{to, kind, subject, body, corr}`; `to` may be `@all` or `#topic` |
 | `GET /recv?wait=N` | agent | long-poll, max 60s, drains the pending queue |
+| `GET /topics` | agent | list topics across all workspaces |
+| `POST /topics` | agent | `{name, rep?}` — create a topic in the caller's workspace |
 | `GET /health` | anyone | liveness |
+
+## Topics — cross-workspace communication
+
+A **topic** is anchored to one workspace and has a **representative** agent
+(persisted in `<userData>/bus/topics.json`):
+
+- a message to `#topic` from **inside** its workspace is a broadcast every
+  agent in that workspace hears;
+- from **any other workspace** it is delivered to the representative only —
+  one terminal speaks for the workspace to the outside.
+
+The representative defaults to the topic's creator; if that terminal is gone,
+delivery falls back to a live registered agent in the topic's workspace. The
+renderer can manage topics directly (create/update/delete + rep assignment)
+through `bus:topic-*` IPC, and reads `bus:stats` (agents + per-link message
+counts + per-workspace links + recent messages) to draw the communication maps.
 
 `kind` is one of `note` (fire and forget), `ask` / `reply` (paired by `corr`),
 `claim` (I am taking this file/task).

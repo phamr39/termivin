@@ -11,7 +11,7 @@ const fail = (m) => {
   process.exitCode = 1;
 };
 
-const cdp = await chromium.connectOverCDP('http://127.0.0.1:9222');
+const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[2] || '9222'}`);
 const page = cdp.contexts()[0].pages().find((p) => p.url().includes('index.html')) || cdp.contexts()[0].pages()[0];
 page.on('dialog', (d) => d.accept());
 await page.waitForSelector('.ws-item', { timeout: 10000 });
@@ -43,13 +43,16 @@ async function dragHandle(dir, dx, dy) {
   await page.waitForTimeout(300);
 }
 
-// baseline: park the pane somewhere with room in every direction
+// baseline: park the pane somewhere with room in every direction, on top of
+// any other pane so the drags below hit its handles and not a sibling's body
 await page.evaluate((id) => {
   const { S } = window.__termivin;
   const t = S.findTerminal(id).meta;
   Object.assign(t.layout, { x: 120, y: 80, w: 500, h: 320 });
+  S.bringToFront(id);
   const p = document.querySelector(`.pane[data-term-id="${id}"]`);
   p.style.left = '120px'; p.style.top = '80px'; p.style.width = '500px'; p.style.height = '320px';
+  p.style.zIndex = t.layout.z;
 }, termId);
 const base = await layout();
 

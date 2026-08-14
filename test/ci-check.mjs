@@ -18,13 +18,17 @@ const fail = (m) => {
 
 // --- syntax checks --------------------------------------------------------
 
-const CJS = ['src/main.js', 'src/preload.js', 'bin/termivin.js'];
+const CJS = ['src/main.js', 'src/preload.js', 'src/agent-bus.js', 'src/bus-client.js', 'bin/termivin.js'];
 const ESM = [
   'src/renderer/app.js',
   'src/renderer/ui.js',
   'src/renderer/state.js',
   'src/renderer/term-manager.js',
   'src/renderer/presets.js',
+  'src/renderer/busmap.js',
+  'src/renderer/dash-data.js',
+  'src/renderer/dashboard.js',
+  'src/renderer/home.js',
 ];
 
 for (const f of CJS) {

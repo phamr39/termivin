@@ -34,6 +34,119 @@ const rate = new Map();
 // name, type, status }. Pushed on every render/status change.
 let roster = new Map();
 
+// --- topics ---------------------------------------------------------------
+// A topic belongs to one workspace. Inside that workspace, a message to the
+// topic is a broadcast every agent hears; from any OTHER workspace it is
+// delivered to the topic's representative agent only — the one terminal that
+// speaks for the workspace to the outside. Persisted in <dataDir>/topics.json.
+// topicId -> { id, name, spaceId, repId, createdAt }
+const topics = new Map();
+
+// --- traffic stats (drive the dashboard maps; reset on app start) ----------
+const linkCounts = new Map(); // 'fromId>toId' -> count
+const agentTraffic = new Map(); // termId -> { sent, recv }
+const spaceLinks = new Map(); // 'fromSpaceId>toSpaceId' -> count (cross-space only)
+const recentMessages = []; // ring buffer of the last RECENT_MAX deliveries
+const RECENT_MAX = 200;
+
+function bumpTraffic(fromId, toId, fromSpace, toSpace) {
+  const key = fromId + '>' + toId;
+  linkCounts.set(key, (linkCounts.get(key) || 0) + 1);
+  const f = agentTraffic.get(fromId) || { sent: 0, recv: 0 };
+  f.sent++;
+  agentTraffic.set(fromId, f);
+  const t = agentTraffic.get(toId) || { sent: 0, recv: 0 };
+  t.recv++;
+  agentTraffic.set(toId, t);
+  if (fromSpace && toSpace && fromSpace !== toSpace) {
+    const sk = fromSpace + '>' + toSpace;
+    spaceLinks.set(sk, (spaceLinks.get(sk) || 0) + 1);
+  }
+}
+
+function topicsFile() {
+  return path.join(dataDir, 'topics.json');
+}
+
+function saveTopics() {
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(topicsFile(), JSON.stringify([...topics.values()], null, 2), 'utf8');
+  } catch (err) {
+    console.error('[bus] topics save failed:', err.message);
+  }
+}
+
+function loadTopics() {
+  try {
+    for (const t of JSON.parse(fs.readFileSync(topicsFile(), 'utf8'))) {
+      if (t && t.id && t.name && t.spaceId) topics.set(t.id, t);
+    }
+  } catch {}
+}
+
+function findTopicByName(name) {
+  const needle = String(name).toLowerCase();
+  return [...topics.values()].find((t) => t.name.toLowerCase() === needle) || null;
+}
+
+function agentsInSpace(spaceId) {
+  return [...roster.values()].filter((a) => a.spaceId === spaceId);
+}
+
+// The terminal that answers for a topic when another workspace calls: the
+// configured representative if it still exists, else a registered agent in
+// the topic's workspace, else any agent there.
+function topicRepresentative(topic) {
+  if (topic.repId && roster.has(topic.repId)) return roster.get(topic.repId);
+  const candidates = agentsInSpace(topic.spaceId);
+  return candidates.find((a) => profiles.has(a.termId)) || candidates[0] || null;
+}
+
+function createTopic(name, spaceId, repId) {
+  const clean = String(name || '').trim().replace(/^#/, '').slice(0, 60);
+  if (!clean) return { ok: false, error: 'topic name required' };
+  const existing = findTopicByName(clean);
+  if (existing) {
+    return { ok: false, error: `topic "${clean}" already exists`, topic: existing };
+  }
+  const topic = {
+    id: 'tp_' + crypto.randomBytes(5).toString('hex'),
+    name: clean,
+    spaceId,
+    repId: repId || null,
+    createdAt: Date.now(),
+  };
+  topics.set(topic.id, topic);
+  saveTopics();
+  onEvent({ type: 'topic', op: 'create', topic });
+  return { ok: true, topic };
+}
+
+function updateTopic(id, patch) {
+  const topic = topics.get(id);
+  if (!topic) return { ok: false, error: 'no such topic' };
+  if (patch.name) {
+    const clean = String(patch.name).trim().replace(/^#/, '').slice(0, 60);
+    const other = findTopicByName(clean);
+    if (other && other.id !== id) return { ok: false, error: `topic "${clean}" already exists` };
+    if (clean) topic.name = clean;
+  }
+  if ('repId' in patch) topic.repId = patch.repId || null;
+  saveTopics();
+  onEvent({ type: 'topic', op: 'update', topic });
+  return { ok: true, topic };
+}
+
+function deleteTopic(id) {
+  const topic = topics.get(id);
+  if (!topic) return { ok: false, error: 'no such topic' };
+  topics.delete(id);
+  saveTopics();
+  onEvent({ type: 'topic', op: 'delete', topic });
+  return { ok: true };
+}
+
 function queueFor(id) {
   if (!pending.has(id)) pending.set(id, []);
   return pending.get(id);
@@ -87,6 +200,26 @@ function replayLogs() {
 
 function deliver(toId, msg, spaceId) {
   append(spaceId, { t: 'msg', to: toId, msg });
+  const fromSpace = roster.get(msg.from) ? roster.get(msg.from).spaceId : null;
+  bumpTraffic(msg.from, toId, fromSpace, spaceId);
+  recentMessages.push({
+    ts: msg.ts,
+    from: msg.from,
+    fromName: msg.fromName,
+    fromSpace,
+    to: toId,
+    toName: msg.toName,
+    toSpace: spaceId,
+    kind: msg.kind,
+    subject: msg.subject,
+    topic: msg.topic || null,
+    broadcast: !!msg.broadcast,
+  });
+  if (recentMessages.length > RECENT_MAX) recentMessages.splice(0, recentMessages.length - RECENT_MAX);
+  onEvent({
+    type: 'msg', from: msg.from, to: toId, fromSpace, toSpace: spaceId,
+    topic: msg.topic || null, kind: msg.kind,
+  });
   const waiter = waiters.get(toId);
   if (waiter) {
     waiters.delete(toId);
@@ -231,9 +364,38 @@ async function handle(req, res) {
     if (!body) return send(res, 400, { error: 'invalid json' });
     if (!allowed(me)) return send(res, 429, { error: 'rate limit: 20 messages/minute' });
 
-    const targets = resolveTargets(me, body.to);
-    if (!targets.length) {
-      return send(res, 404, { error: `no such agent in this workspace: ${body.to || '@all'}` });
+    // "#name" (or "topic:name") addresses a topic instead of an agent:
+    // same-workspace senders broadcast to every agent in the topic's
+    // workspace; senders elsewhere reach only the topic's representative.
+    let targets;
+    let topicName = null;
+    const rawTo = String(body.to || '');
+    const topicMatch = rawTo.match(/^#(.+)$/) || rawTo.match(/^topic:(.+)$/i);
+    if (topicMatch) {
+      const topic = findTopicByName(topicMatch[1]);
+      if (!topic) return send(res, 404, { error: `no such topic: #${topicMatch[1]}` });
+      topicName = topic.name;
+      const mySpace = roster.get(me).spaceId;
+      if (topic.spaceId === mySpace) {
+        targets = agentsInSpace(topic.spaceId)
+          .filter((a) => a.termId !== me)
+          .map((a) => describe(a.termId))
+          .filter(Boolean);
+        if (!targets.length) {
+          return send(res, 404, { error: `no other agents in workspace for topic #${topic.name}` });
+        }
+      } else {
+        const rep = topicRepresentative(topic);
+        if (!rep) {
+          return send(res, 404, { error: `topic #${topic.name} has no live agent to represent it` });
+        }
+        targets = [describe(rep.termId)].filter(Boolean);
+      }
+    } else {
+      targets = resolveTargets(me, body.to);
+      if (!targets.length) {
+        return send(res, 404, { error: `no such agent in this workspace: ${body.to || '@all'}` });
+      }
     }
     const ttl = Math.min(Number(body.ttl) || DEFAULT_TTL, DEFAULT_TTL);
     if (ttl <= 0) return send(res, 200, { ok: true, delivered: 0, note: 'ttl exhausted' });
@@ -248,13 +410,38 @@ async function handle(req, res) {
       body: String(body.body || '').slice(0, 20000),
       corr: body.corr || null,
       ttl: ttl - 1,
+      topic: topicName,
       broadcast: targets.length > 1,
     };
     for (const t of targets) {
       deliver(t.id, { ...base, id: 'm_' + crypto.randomBytes(5).toString('hex'), to: t.id, toName: t.name },
         t.space);
     }
-    return send(res, 200, { ok: true, delivered: targets.map((t) => t.name) });
+    return send(res, 200, { ok: true, delivered: targets.map((t) => t.name), topic: topicName });
+  }
+
+  if (route === '/topics' && req.method === 'GET') {
+    return send(res, 200, { topics: describeTopics() });
+  }
+
+  // Create (or claim) a topic from an agent. The topic is anchored to the
+  // sender's workspace; the sender becomes the representative unless --rep
+  // names another agent in the same workspace.
+  if (route === '/topics' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!body) return send(res, 400, { error: 'invalid json' });
+    const mySpace = roster.get(me).spaceId;
+    let repId = me;
+    if (body.rep) {
+      const needle = String(body.rep).toLowerCase();
+      const found = agentsInSpace(mySpace).find(
+        (a) => a.termId === body.rep || a.name.toLowerCase() === needle);
+      if (!found) return send(res, 404, { error: `no such agent in this workspace: ${body.rep}` });
+      repId = found.termId;
+    }
+    const r = createTopic(body.name, mySpace, repId);
+    if (!r.ok) return send(res, 409, { error: r.error });
+    return send(res, 200, { ok: true, topic: describeTopic(r.topic) });
   }
 
   if (route === '/recv' && req.method === 'GET') {
@@ -292,6 +479,50 @@ async function handle(req, res) {
   return send(res, 404, { error: 'no such route' });
 }
 
+// --- snapshots for the renderer -------------------------------------------
+
+function describeTopic(t) {
+  const space = agentsInSpace(t.spaceId)[0];
+  const rep = topicRepresentative(t);
+  return {
+    id: t.id,
+    name: t.name,
+    spaceId: t.spaceId,
+    spaceName: space ? space.spaceName : null,
+    repId: t.repId,
+    repName: t.repId && roster.has(t.repId) ? roster.get(t.repId).name : null,
+    effectiveRepId: rep ? rep.termId : null,
+    effectiveRepName: rep ? rep.name : null,
+    members: agentsInSpace(t.spaceId).length,
+    createdAt: t.createdAt,
+  };
+}
+
+function describeTopics() {
+  return [...topics.values()].map(describeTopic);
+}
+
+// Everything the dashboard maps need in one call.
+function stats() {
+  return {
+    agents: [...roster.keys()].map(describe).filter(Boolean).map((a) => ({
+      ...a,
+      pending: pendingCount(a.id),
+      traffic: agentTraffic.get(a.id) || { sent: 0, recv: 0 },
+    })),
+    topics: describeTopics(),
+    links: [...linkCounts.entries()].map(([k, count]) => {
+      const [from, to] = k.split('>');
+      return { from, to, count };
+    }),
+    spaceLinks: [...spaceLinks.entries()].map(([k, count]) => {
+      const [from, to] = k.split('>');
+      return { from, to, count };
+    }),
+    recent: recentMessages.slice(-60),
+  };
+}
+
 // --- lifecycle ------------------------------------------------------------
 
 function start(userDataDir, eventSink) {
@@ -300,6 +531,7 @@ function start(userDataDir, eventSink) {
   onEvent = typeof eventSink === 'function' ? eventSink : () => {};
   token = crypto.randomBytes(24).toString('hex');
   replayLogs();
+  loadTopics();
 
   server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -362,6 +594,11 @@ function stop() {
   pending.clear();
   profiles.clear();
   rate.clear();
+  topics.clear();
+  linkCounts.clear();
+  agentTraffic.clear();
+  spaceLinks.clear();
+  recentMessages.length = 0;
   roster = new Map();
   if (server) {
     try { server.close(); } catch {}
@@ -369,4 +606,7 @@ function stop() {
   }
 }
 
-module.exports = { start, stop, setRoster, info, pendingCount };
+module.exports = {
+  start, stop, setRoster, info, pendingCount,
+  stats, createTopic, updateTopic, deleteTopic,
+};

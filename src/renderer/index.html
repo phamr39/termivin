@@ -17,11 +17,18 @@
           <span>Termivin</span>
         </div>
       </div>
+      <div id="home-item" title="App overview — all workspaces, resources, token usage">
+        <span class="home-item-icon">⌂</span>
+        <span class="ws-name">Overview</span>
+      </div>
       <div class="sidebar-section-title">
         <span>WORKSPACES</span>
         <button id="new-workspace-btn" class="icon-btn" title="New workspace">+</button>
       </div>
       <div id="workspace-list"></div>
+      <div id="sidebar-footer">
+        <span id="app-version" title="Termivin version"></span>
+      </div>
     </aside>
 
     <main id="main">
@@ -46,6 +53,7 @@
         <div id="panes"></div>
         <div id="dock" class="hidden"></div>
         <div id="dashboard" class="hidden"></div>
+        <div id="home" class="hidden"></div>
         <div id="empty-state" class="hidden">
           <div class="empty-icon">▣</div>
           <div class="empty-title">No terminals in this workspace</div>
