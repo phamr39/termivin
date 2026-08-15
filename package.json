@@ -1,7 +1,7 @@
 {
   "name": "termivin",
   "productName": "Termivin",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Workspace manager for terminals, optimized for AI CLI clients (Claude Code, Codex)",
   "keywords": [
     "terminal",
@@ -25,6 +25,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "prestart": "node src/mac-app-name.js",
     "start": "electron .",
     "start:debug": "electron . --remote-debugging-port=9222",
     "test": "node test/ci-check.mjs",
@@ -38,6 +39,7 @@
     "test:themes": "node test/themes.mjs 9223",
     "test:bus-ui": "node test/bus-ui.mjs 9223",
     "test:features": "node test/features.mjs 9223",
+    "prestart:dev": "node src/mac-app-name.js",
     "start:dev": "electron . --user-data-dir=.dev-profile --remote-debugging-port=9223",
     "test:restore": "node test/restore.mjs",
     "test:external": "node test/external.mjs",

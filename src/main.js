@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, nativeImage, shell, clipboard, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execFileSync } = require('child_process');
@@ -78,11 +78,56 @@ function setMacDockIcon() {
     const img = nativeImage.createFromPath(
       path.join(__dirname, '..', 'assets', 'termivin-logo.png'));
     if (!img.isEmpty()) app.dock.setIcon(img);
+    // The About panel otherwise reports the bundle's version, which unpackaged
+    // is Electron's rather than ours (src/mac-app-name.js covers the name).
+    app.setAboutPanelOptions({
+      applicationName: 'Termivin',
+      applicationVersion: app.getVersion(),
+      copyright: 'Copyright © 2026 phamr39',
+    });
   } catch {}
+}
+
+// macOS always shows a menu bar, and the native menu claims its accelerators
+// before the renderer ever sees the keystroke — the inverse of Windows, which
+// the terminal's own Ctrl+C/Ctrl+V handling relies on. Electron's stock menu
+// therefore breaks two things here: Cmd+C copies the (always empty) DOM
+// selection rather than xterm's canvas selection, and Cmd+W closes the only
+// window, which quits the app and kills every pty. Ship a lean menu instead.
+function setMacApplicationMenu() {
+  if (process.platform !== 'darwin') return;
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        // Shown but not registered, so the key reaches xterm's handler, which
+        // copies a selection and otherwise still sends SIGINT. Chromium keeps
+        // handling Cmd+C natively inside text inputs.
+        { role: 'copy', accelerator: 'Cmd+C', registerAccelerator: false },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [{ role: 'togglefullscreen' }, { role: 'toggleDevTools' }],
+    },
+    // Deliberately no Close item: one stray Cmd+W would take the session down.
+    {
+      label: 'Window',
+      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }],
+    },
+  ]));
 }
 
 function createWindow() {
   setMacDockIcon();
+  setMacApplicationMenu();
   win = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -153,6 +198,16 @@ function ensureStartMenuShortcut(iconPath, appRoot) {
 
 // ---------- PTY IPC ----------
 
+// A GUI app launched from the Dock inherits launchd's bare PATH, and Homebrew,
+// nvm and asdf all install their setup into ~/.zprofile — which only a login
+// shell reads. Terminal.app and iTerm2 start login shells for exactly this
+// reason, so `claude` and `codex` resolve there but would not here. Linux
+// terminals conventionally don't, so this stays macOS-only.
+function loginShellArgs(shell) {
+  if (process.platform !== 'darwin') return [];
+  return /\/(zsh|bash|sh|fish)$/.test(shell || '') ? ['-l'] : [];
+}
+
 function busEnv(termId, spaceId, name) {
   const { url, token } = bus.info();
   if (!url) return {};
@@ -178,7 +233,7 @@ ipcMain.handle('pty:create', (event, opts) => {
 
   let proc;
   try {
-    proc = pty.spawn(shell, args, {
+    proc = pty.spawn(shell, args.length ? args : loginShellArgs(shell), {
       name: 'xterm-256color',
       cols,
       rows,

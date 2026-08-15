@@ -109,7 +109,10 @@ check('bus sees live status', ['idle', 'working'].includes(agents.json?.me?.stat
 const alphaPane = `.pane[data-term-id="${alpha}"]`;
 await focusPane(alpha);
 await page.click(`${alphaPane} .pane-body`);
-await page.keyboard.type('echo AGENT=$env:TERMIVIN_AGENT URL=$env:TERMIVIN_URL', { delay: 8 });
+// The pane runs the platform's shell, so read the variables in its own syntax.
+await page.keyboard.type(process.platform === 'win32'
+  ? 'echo AGENT=$env:TERMIVIN_AGENT URL=$env:TERMIVIN_URL'
+  : 'echo AGENT=$TERMIVIN_AGENT URL=$TERMIVIN_URL', { delay: 8 });
 await page.keyboard.press('Enter');
 await page.waitForTimeout(2500);
 const envOut = await page.evaluate(

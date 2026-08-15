@@ -2,8 +2,10 @@
 // instead of covering the map, legends as footers, brighter map borders.
 import { chromium } from 'playwright-core';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
-const SHOT = 'C:/Users/phamn/AppData/Local/Temp/claude/D--Work-Termivin/8fac8941-c8ff-4ec6-8a0f-e8ad4cf32c52/scratchpad/shots';
+const SHOT = path.join(os.tmpdir(), 'termivin-shots');
 fs.mkdirSync(SHOT, { recursive: true });
 
 const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[2] || '9222'}`);

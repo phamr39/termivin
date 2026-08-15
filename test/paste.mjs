@@ -12,11 +12,15 @@ const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 await page.waitForSelector('.ws-item', { timeout: 10000 });
 
-// wipe all terminals in the active workspace
+// Wipe all terminals in the active workspace and land on its canvas: the
+// toolbar buttons are hidden on Home and on the dashboard, where an earlier
+// suite may have left the app.
 await page.evaluate(() => {
   const S = window.__termivin.S, TM = window.__termivin.TM;
   const ws = S.activeWorkspace();
   for (const t of [...ws.terminals]) { TM.disposeTerminal(t.id); S.removeTerminal(t.id); }
+  S.getState().appView = 'ws';
+  ws.view = 'canvas';
 });
 await page.reload();
 await page.waitForSelector('.ws-item', { timeout: 10000 });
@@ -25,7 +29,10 @@ await page.click('#new-terminal-btn');
 await page.waitForSelector('#modal-overlay:not(.hidden)');
 await page.selectOption('#nt-type', 'claude');
 await page.fill('#nt-name', 'claude-fix-check');
-await page.fill('#nt-cwd', 'D:\\Work\\Termivin');
+// Start claude in this checkout: a folder the developer already trusts, so it
+// boots to its prompt instead of the first-run trust question, which would
+// leave mouse tracking off and skip the test.
+await page.fill('#nt-cwd', process.cwd());
 await page.click('#nt-create');
 await page.waitForTimeout(1000);
 
@@ -61,8 +68,20 @@ for (let i = 0; i < 45; i++) {
   mode = await trackingOf();
   if (mode !== 'none') break;
 }
+// Take the claude session down with us: left running it would be saved into the
+// app state and restored on the next launch, where its full-screen UI hides the
+// scrollback that test/restore.mjs looks for.
+const dropTerminal = () => page.evaluate((id) => {
+  window.__termivin.TM.disposeTerminal(id);
+  window.__termivin.S.removeTerminal(id);
+}, id);
+
 console.log('mouseTrackingMode:', mode);
-if (mode === 'none') { console.log('claude never enabled mouse tracking; tail:\n' + (await tailOf()).join('\n')); process.exit(2); }
+if (mode === 'none') {
+  console.log('claude never enabled mouse tracking; tail:\n' + (await tailOf()).join('\n'));
+  await dropTerminal();
+  process.exit(2);
+}
 await page.waitForTimeout(2000);
 
 const c = await page.evaluate((id) => {
@@ -81,6 +100,7 @@ const occ = lastInput.split('ZQMARK9').length - 1;
 console.log('current input line:', JSON.stringify(lastInput));
 console.log(occ === 1 ? 'PASS' : 'FAIL', 'right-click paste occurrences =', occ);
 
-// cleanup: clear the input so nothing is submitted
+// cleanup: clear the input so nothing is submitted, then drop the session
 await page.evaluate((id) => window.__termivin.TM.sendKeys(id, '\x1b'), id);
+await dropTerminal();
 process.exit(occ === 1 ? 0 : 1);

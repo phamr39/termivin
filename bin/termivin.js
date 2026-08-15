@@ -8,6 +8,7 @@
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const bus = require('../src/bus-client');
+const { ensureMacBundleName } = require('../src/mac-app-name');
 
 const root = path.join(__dirname, '..');
 const pkg = require(path.join(root, 'package.json'));
@@ -89,6 +90,8 @@ function launch() {
     console.error('Could not find Electron. Run "npm install" in ' + root);
     return 1;
   }
+  // Must happen before the bundle boots — macOS reads the name once at launch.
+  ensureMacBundleName();
   // Forward extra args to Electron, translating our --debug shorthand.
   const forwarded = argv.map((a) => (a === '--debug' ? '--remote-debugging-port=9222' : a));
   const child = spawn(electron, [root, ...forwarded], {

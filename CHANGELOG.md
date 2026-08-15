@@ -3,6 +3,21 @@
 All notable changes to Termivin are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.3.1] — 2026-08-15
+
+Termivin behaves like a native Mac app: it is named Termivin everywhere, its terminals find the tools your shell profile installs, and ⌘C copies.
+
+### Fixed
+
+- **macOS: the app is called Termivin again.** macOS takes the menu-bar title, Dock label and Force-Quit entry from the running bundle's `Info.plist`, which `app.setName()` cannot override — so unpackaged runs (`npm start`, the global `termivin` command) announced themselves as "Electron". Launching now renames the local Electron bundle first, and the About panel reports Termivin's own version instead of Electron's.
+- **macOS: terminals start login shells**, matching Terminal.app and iTerm2. Homebrew, nvm and asdf write their setup to `~/.zprofile`, which only a login shell reads, so a Termivin opened from the Dock — inheriting launchd's bare `PATH` — could not find `claude` or `codex`.
+- **macOS: ⌘C copies the terminal selection.** The native menu claims accelerators before the renderer sees them, the inverse of Windows, so the stock menu's ⌘C copied the always-empty DOM selection instead. Termivin now ships its own menu, which also drops Close Window: a stray ⌘W used to quit the app and kill every terminal.
+- **Agent bus: the CLI and the app agree on the data directory.** The CLI looked for `bus.json` under `termivin`, the app wrote it to `Termivin`; only case-insensitive filesystems hid the mismatch.
+
+### Changed
+
+- **The E2E suites run on macOS.** They were authored on Windows and typed PowerShell into panes, pressed Ctrl+A for select-all and pointed at `D:\Work`, so most of them failed or hung on a Mac for reasons that had nothing to do with the app. Each now speaks the host platform's shell and key bindings; the two genuinely Windows-only suites skip with a message instead of crashing.
+
 ## [0.3.0] — 2026-08-15
 
 ### Added

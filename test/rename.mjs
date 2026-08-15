@@ -20,7 +20,7 @@ await page.waitForSelector('.ws-item', { timeout: 10000 });
 // could not click into still passed this suite.
 async function typeInto(sel, text) {
   await page.click(sel);
-  await page.keyboard.press('Control+a');
+  await page.keyboard.press('ControlOrMeta+a'); // Cmd+A is select-all on macOS
   await page.keyboard.type(text, { delay: 20 });
 }
 

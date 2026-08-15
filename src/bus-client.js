@@ -12,13 +12,16 @@ const os = require('os');
 const path = require('path');
 
 function userDataDir() {
+  // Must match app.getPath('userData'), which Electron derives from
+  // package.json's productName — "Termivin", not the package name. Only APFS's
+  // case-insensitivity hid the mismatch on macOS.
   if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'termivin');
+    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'Termivin');
   }
   if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'termivin');
+    return path.join(os.homedir(), 'Library', 'Application Support', 'Termivin');
   }
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'termivin');
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'Termivin');
 }
 
 function credentials() {

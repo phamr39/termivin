@@ -35,8 +35,16 @@ for (let i = 0; i < 20; i++) {
   dot = (await page.getAttribute('.tab .dot', 'class').catch(() => '')) || '';
   if (dot.includes('st-working') || dot.includes('st-idle')) break;
 }
-if (dot.includes('st-working') || dot.includes('st-idle')) ok('auto-restore spawned the terminal (' + dot + ')');
-else fail('restored terminal dot: ' + dot);
+if (dot.includes('st-working') || dot.includes('st-idle')) {
+  ok('auto-restore spawned the terminal (' + dot + ')');
+} else {
+  // Nothing came back, so the checks below have no pane to work with — say why
+  // and stop, rather than blocking forever on a selector that will never match.
+  fail('restored terminal dot: ' + JSON.stringify(dot)
+    + ' (save a terminal in the state and restart the app before running this)');
+  await cdp.close();
+  process.exit(1);
+}
 
 // the replay marker is in scrollback (xterm renders only the viewport) —
 // scroll to the top of the buffer before reading

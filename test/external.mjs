@@ -12,6 +12,14 @@ const fail = (m) => {
   process.exitCode = 1;
 };
 
+// Attaching a foreign console window is a Windows-only capability (win-embed.ps1);
+// macOS adopts sessions instead, which test/adopt.mjs covers. Skip rather than
+// crash on `spawn cmd.exe ENOENT`.
+if (process.platform !== 'win32') {
+  console.log('SKIP  external window attach (Windows only) — see test/adopt.mjs for the macOS flow');
+  process.exit(0);
+}
+
 const cdp = await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[2] || '9222'}`);
 const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];

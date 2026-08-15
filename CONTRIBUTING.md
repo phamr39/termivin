@@ -43,6 +43,8 @@ npm run test:rename     # rename flows
 
 Tests drive the real app window over CDP, so run them on a machine where the app window can open. Please make sure the relevant suites pass before opening a PR, and add coverage for new behavior where practical.
 
+The suites run on Windows and macOS. Two are platform-specific and skip elsewhere with a message rather than fail: `test:external` (attaching a foreign console window is Windows-only — `test:adopt` covers the macOS equivalent) and `test:paste` (a Windows right-click regression; it needs `claude` to turn on mouse tracking). `test:restore` expects a saved terminal from a previous run: create one, let the state file settle, restart the app, then run it.
+
 ## Pull requests
 
 1. Fork and create a topic branch from `main`.

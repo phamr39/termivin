@@ -18,7 +18,14 @@ const fail = (m) => {
 
 // --- syntax checks --------------------------------------------------------
 
-const CJS = ['src/main.js', 'src/preload.js', 'src/agent-bus.js', 'src/bus-client.js', 'bin/termivin.js'];
+const CJS = [
+  'src/main.js',
+  'src/preload.js',
+  'src/agent-bus.js',
+  'src/bus-client.js',
+  'src/mac-app-name.js',
+  'bin/termivin.js',
+];
 const ESM = [
   'src/renderer/app.js',
   'src/renderer/ui.js',

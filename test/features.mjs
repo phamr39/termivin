@@ -144,7 +144,9 @@ const boxBefore = await page.evaluate((s) => {
   return { x: p.offsetLeft, y: p.offsetTop };
 }, pane);
 await page.click(`${pane} .inline-rename`);
-await page.keyboard.press('Control+a');
+// Select-all is Cmd+A on macOS; Ctrl+A there just moves the caret to the start,
+// which would prepend the new name to the old one instead of replacing it.
+await page.keyboard.press('ControlOrMeta+a');
 await page.keyboard.type('RenamedViaMenu', { delay: 25 });
 const typed = await page.inputValue(`${pane} .inline-rename`);
 check('typing into the rename input works', typed === 'RenamedViaMenu', typed);
@@ -171,7 +173,7 @@ await page.waitForSelector('.tab .inline-rename', { timeout: 3000 });
 check('tab is not draggable while renaming',
   await page.getAttribute(`.tab[data-term-id="${termId}"]`, 'draggable') === 'false');
 await page.click('.tab .inline-rename');
-await page.keyboard.press('Control+a');
+await page.keyboard.press('ControlOrMeta+a');
 await page.keyboard.type('RenamedViaTab', { delay: 25 });
 await page.keyboard.press('Enter');
 await page.waitForTimeout(400);
@@ -181,7 +183,9 @@ check('tab is draggable again after renaming',
 
 // -------------------------------------------------- refresh / scrollback
 await page.click(`${pane} .xterm-screen`);
-await page.keyboard.type('1..60 | ForEach-Object { "filler line $_" }', { delay: 5 });
+await page.keyboard.type(isWin
+  ? '1..60 | ForEach-Object { "filler line $_" }'
+  : 'for i in $(seq 1 60); do echo "filler line $i"; done', { delay: 5 });
 await page.keyboard.press('Enter');
 await page.waitForTimeout(2500);
 const before = await page.evaluate((id) =>

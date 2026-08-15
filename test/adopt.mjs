@@ -21,6 +21,17 @@ const acceptDialog = async () => {
 
 await page.waitForSelector('.ws-item', { timeout: 10000 });
 
+// Land on a workspace canvas: the adopt button is hidden on Home and on the
+// dashboard, so a suite that ran before this one could leave it unclickable.
+await page.evaluate(() => {
+  const S = window.__termivin.S;
+  S.getState().appView = 'ws';
+  S.activeWorkspace().view = 'canvas';
+  document.querySelectorAll('.modal-overlay').forEach((o) => o.classList.add('hidden'));
+});
+await page.reload();
+await page.waitForSelector('.ws-item', { timeout: 10000 });
+
 // The button is labelled "Adopt terminal" on macOS and must be visible.
 const btnText = (await page.textContent('#attach-window-btn')).trim();
 if (/adopt/i.test(btnText)) ok('adopt button shows: ' + btnText);
