@@ -123,18 +123,21 @@ function drawMap(ws, stats) {
   const nodes = ws.terminals.map((t) => {
     const info = typeInfo(t.external ? 'external' : t.type);
     const a = agentInfo(stats, t.id);
-    const registered = a && a.registered;
     const traffic = a ? a.traffic : { sent: 0, recv: 0 };
     const role = a && a.role;
+    // "On the bus" is anything the bus has actually touched: a registered
+    // role, past traffic, or mail waiting. Every Termivin terminal hears
+    // topic broadcasts, so a node with traces must never read as offline.
+    const onBus = !!(a && (a.registered || a.pending || traffic.sent + traffic.recv > 0));
     return {
       id: t.id,
       label: t.name,
       icon: info.icon,
       color: info.color,
       status: TM.getStatus(t.id),
-      sub: role || (registered ? 'on the bus' : t.external ? 'external window' : 'not on the bus'),
+      sub: role || (onBus ? 'on the bus' : t.external ? 'external window' : info.label + ' · quiet'),
       badge: a && a.pending ? '✉ ' + a.pending : null,
-      dim: !registered,
+      dim: !onBus,
       title: `${t.name}\n${info.label}${role ? '\nrole: ' + role : ''}\nsent ${traffic.sent} · received ${traffic.recv}\nclick to open in canvas`,
     };
   });
@@ -195,9 +198,10 @@ function drawMap(ws, stats) {
       title: `#${t.name}\nEvery agent here hears it; outside workspaces reach ${t.effectiveRepName || '(nobody)'}.`,
     }));
   for (const t of stats.topics.filter((t) => t.spaceId === ws.id)) {
+    // every terminal in the workspace hears its topics — the representative
+    // gets the solid line, everyone else a dashed listen line
     for (const a of stats.agents) {
       if (a.space !== ws.id || !termIds.has(a.id)) continue;
-      if (!a.registered && a.id !== t.effectiveRepId) continue;
       links.push({
         a: a.id, b: 'topic:' + t.id, count: 0,
         kind: a.id === t.effectiveRepId ? 'traffic' : 'listen',
@@ -220,7 +224,8 @@ function drawMap(ws, stats) {
   }
   const note = document.getElementById('wsdash-busnote');
   if (note) {
-    const anyOnBus = stats.agents.some((a) => a.space === ws.id && a.registered);
+    const anyOnBus = stats.agents.some((a) => a.space === ws.id &&
+      (a.registered || a.pending || (a.traffic && a.traffic.sent + a.traffic.recv > 0)));
     note.classList.toggle('hidden', anyOnBus);
   }
 }

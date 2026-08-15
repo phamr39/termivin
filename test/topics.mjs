@@ -114,8 +114,16 @@ await new Promise((r) => setTimeout(r, 100));
 bus.start(dir, () => {});
 await new Promise((r) => setTimeout(r, 200));
 bus.setRoster(ROSTER);
-const reListed = bus.stats().topics;
-check('topics survive a bus restart', reListed.length === 2 && reListed.some((t) => t.name === 'deploys'), reListed);
+const reStats = bus.stats();
+check('topics survive a bus restart', reStats.topics.length === 2 && reStats.topics.some((t) => t.name === 'deploys'), reStats.topics);
+check('registration survives a bus restart',
+  reStats.agents.find((a) => a.id === 't2')?.registered === true, reStats.agents.find((a) => a.id === 't2'));
+check('traffic links are rebuilt from the log on restart',
+  reStats.links.some((l) => l.from === 't3' && l.to === 't1' && l.count >= 1), reStats.links);
+check('cross-workspace links are rebuilt on restart',
+  reStats.spaceLinks.some((l) => l.from === 'ws2' && l.to === 'ws1'), reStats.spaceLinks);
+check('recent feed survives a restart',
+  reStats.recent.length > 0 && reStats.recent.some((m) => m.topic === 'deploys'), reStats.recent.length);
 
 // main-process management API
 const created = bus.createTopic('ops', 'ws3', 't5');

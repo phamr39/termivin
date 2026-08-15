@@ -177,6 +177,7 @@ function replayLogs() {
   } catch {
     return;
   }
+  const replayedRecent = [];
   for (const f of files) {
     let lines;
     try {
@@ -184,23 +185,72 @@ function replayLogs() {
     } catch {
       continue;
     }
+    const spaceId = f.slice(0, -'.jsonl'.length); // sanitized == original for our ids
     const undelivered = new Map(); // messageId -> {to, msg}
     for (const line of lines) {
       if (!line.trim()) continue;
       let rec;
       try { rec = JSON.parse(line); } catch { continue; }
-      if (rec.t === 'msg') undelivered.set(rec.msg.id + '>' + rec.to, rec);
-      else if (rec.t === 'deliver') undelivered.delete(rec.id + '>' + rec.to);
+      if (rec.t === 'msg') {
+        undelivered.set(rec.msg.id + '>' + rec.to, rec);
+        // Rebuild the traffic map from the log, so the dashboard's links and
+        // feed survive a restart instead of starting from a blank network.
+        const m = rec.msg;
+        bumpTraffic(m.from, rec.to, rec.fs || spaceId, spaceId);
+        replayedRecent.push({
+          ts: m.ts,
+          from: m.from,
+          fromName: m.fromName,
+          fromSpace: rec.fs || spaceId,
+          to: rec.to,
+          toName: m.toName,
+          toSpace: spaceId,
+          kind: m.kind,
+          subject: m.subject,
+          topic: m.topic || null,
+          broadcast: !!m.broadcast,
+        });
+      } else if (rec.t === 'deliver') {
+        undelivered.delete(rec.id + '>' + rec.to);
+      }
     }
     for (const rec of undelivered.values()) queueFor(rec.to).push(rec.msg);
   }
+  replayedRecent.sort((a, b) => a.ts - b.ts);
+  recentMessages.push(...replayedRecent.slice(-RECENT_MAX));
+}
+
+// --- profile persistence ----------------------------------------------------
+// Registrations (role/skills/cwd) must survive an app restart — terminal ids
+// are stable, so the profile map maps 1:1 onto restored terminals.
+
+function profilesFile() {
+  return path.join(dataDir, 'profiles.json');
+}
+
+function saveProfiles() {
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(profilesFile(), JSON.stringify(Object.fromEntries(profiles), null, 2), 'utf8');
+  } catch (err) {
+    console.error('[bus] profiles save failed:', err.message);
+  }
+}
+
+function loadProfiles() {
+  try {
+    for (const [id, p] of Object.entries(JSON.parse(fs.readFileSync(profilesFile(), 'utf8')))) {
+      if (p && p.registeredAt) profiles.set(id, p);
+    }
+  } catch {}
 }
 
 // --- delivery -------------------------------------------------------------
 
 function deliver(toId, msg, spaceId) {
-  append(spaceId, { t: 'msg', to: toId, msg });
   const fromSpace = roster.get(msg.from) ? roster.get(msg.from).spaceId : null;
+  // fs lets the replay rebuild cross-workspace links after a restart
+  append(spaceId, { t: 'msg', to: toId, msg, fs: fromSpace });
   bumpTraffic(msg.from, toId, fromSpace, spaceId);
   recentMessages.push({
     ts: msg.ts,
@@ -355,6 +405,7 @@ async function handle(req, res) {
       cwd: body.cwd ? String(body.cwd) : null,
       registeredAt: Date.now(),
     });
+    saveProfiles();
     onEvent({ type: 'register', id: me });
     return send(res, 200, { ok: true, me: describe(me), peers: peersOf(me).filter((p) => p.id !== me) });
   }
@@ -532,6 +583,7 @@ function start(userDataDir, eventSink) {
   token = crypto.randomBytes(24).toString('hex');
   replayLogs();
   loadTopics();
+  loadProfiles();
 
   server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -560,9 +612,10 @@ function start(userDataDir, eventSink) {
 function setRoster(list) {
   const next = new Map();
   for (const t of list || []) next.set(t.termId, t);
+  let profilesChanged = false;
   for (const id of roster.keys()) {
     if (!next.has(id)) {
-      profiles.delete(id);
+      if (profiles.delete(id)) profilesChanged = true;
       const w = waiters.get(id);
       if (w) {
         waiters.delete(id);
@@ -572,6 +625,7 @@ function setRoster(list) {
     }
   }
   roster = next;
+  if (profilesChanged) saveProfiles();
 }
 
 function info() {

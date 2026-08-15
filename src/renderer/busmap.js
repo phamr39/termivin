@@ -128,11 +128,10 @@ export class BusMap {
       const ny = (dx / len) * bend;
       const d = `M ${pa.x} ${pa.y} Q ${mx + nx} ${my + ny} ${pb.x} ${pb.y}`;
       const width = l.kind === 'listen' ? 1 : Math.min(5, 1.4 + Math.log2(1 + (l.count || 0)));
-      const path = sel('path', {
-        d,
-        class: 'bm-trace' + (l.kind === 'listen' ? ' bm-listen' : ''),
-        'stroke-width': width,
-      });
+      const cls = l.kind === 'listen'
+        ? 'bm-trace bm-listen'
+        : 'bm-trace' + ((l.count || 0) > 0 ? ' bm-active' : '');
+      const path = sel('path', { d, class: cls, 'stroke-width': width });
       if (l.kind !== 'listen' && (l.count || 0) > 0) path.setAttribute('filter', 'url(#bm-glow)');
       gTraces.appendChild(path);
       this.paths.set(linkKey(l.a, l.b), { el: path, from: l.a, to: l.b });
