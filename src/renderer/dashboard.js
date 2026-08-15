@@ -58,6 +58,7 @@ export function renderWorkspaceDashboard() {
           <div class="side-title">Topics
             <button class="btn btn-ghost btn-sm side-title-btn" id="wsdash-newtopic">+ New</button>
           </div>
+          <div class="side-note hidden" id="wsdash-busnote">No agent is on the bus yet — press 🔗 on an agent pane to connect it.</div>
           <div class="side-rows" id="wsdash-topics"></div>
           <div class="side-hint">A topic reaches every agent here; other workspaces reach only its representative.</div>
         </section>
@@ -208,15 +209,19 @@ function drawMap(ws, stats) {
   map.topicByName = Object.fromEntries(
     stats.topics.filter((t) => t.spaceId === ws.id).map((t) => [t.name, 'topic:' + t.id]));
 
+  // The centered overlay only appears when the map is truly empty (nothing it
+  // could cover); the "nobody on the bus" nudge lives in the side panel.
   const empty = document.getElementById('wsmap-empty');
   if (!ws.terminals.length) {
     empty.classList.remove('hidden');
     empty.textContent = 'No terminals yet — create one to see it on the map.';
-  } else if (!stats.agents.some((a) => a.space === ws.id && a.registered)) {
-    empty.classList.remove('hidden');
-    empty.innerHTML = 'No agent is on the bus yet.<br>Use the 🔗 button on an agent pane to connect it, then create a topic here.';
   } else {
     empty.classList.add('hidden');
+  }
+  const note = document.getElementById('wsdash-busnote');
+  if (note) {
+    const anyOnBus = stats.agents.some((a) => a.space === ws.id && a.registered);
+    note.classList.toggle('hidden', anyOnBus);
   }
 }
 

@@ -894,8 +894,9 @@ const DOCK_ST_RANK = { approval: 5, working: 4, idle: 3, attached: 3, exited: 2,
 function renderDock() {
   const dock = $('#dock');
   const ws = S.activeWorkspace();
+  // The dock belongs to the workspace canvas — never over Home or a dashboard.
   const docked =
-    ws && ws.view === 'canvas' && !ws.fullscreenTerminalId
+    !isHome() && ws && ws.view === 'canvas' && !ws.fullscreenTerminalId
       ? ws.terminals.filter((t) => t.minimized)
       : [];
   dock.classList.toggle('hidden', !docked.length);
