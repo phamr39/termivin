@@ -27,6 +27,7 @@ export async function loadState() {
     state.activeWorkspaceId = state.workspaces[0].id;
   }
   if (state.appView !== 'home' && state.appView !== 'ws') state.appView = 'ws';
+  if (typeof state.theme !== 'string') state.theme = 'termivin';
   for (const ws of state.workspaces) {
     if (!ws.view || ws.view === 'terminals') ws.view = 'canvas';
     if (!('fullscreenTerminalId' in ws)) ws.fullscreenTerminalId = null;

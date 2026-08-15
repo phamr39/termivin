@@ -4,20 +4,30 @@
 // while the app is running. Pane positioning/interaction lives in ui.js.
 
 import { defaultShell, detectApproval, approvalKeys, typeInfo, isAgentType } from './presets.js';
-import { findTerminal, scheduleSave } from './state.js';
+import { findTerminal, scheduleSave, getState } from './state.js';
+import { themeInfo } from './themes.js';
 
 const runtimes = new Map(); // termId -> rt
 const listeners = new Set(); // status-change subscribers
 const lastNotified = new Map(); // termId -> timestamp (notification throttle)
 
-const XTERM_THEME = {
-  background: '#14181d',
-  foreground: '#d8dee6',
-  cursor: '#d8dee6',
-  selectionBackground: '#2e4a6b',
-  black: '#1c2126',
-  brightBlack: '#5c6773',
-};
+function xtermTheme() {
+  const state = getState();
+  return themeInfo(state ? state.theme : 'termivin').xterm;
+}
+
+// Repaint every live terminal with the given app theme's palette — xterm
+// renders to canvas, so switching the CSS theme alone would leave stale
+// terminal colors behind.
+export function applyXtermTheme(name) {
+  const theme = themeInfo(name).xterm;
+  for (const rt of runtimes.values()) {
+    if (rt.xterm) {
+      rt.xterm.options.theme = { ...theme };
+      try { rt.xterm.refresh(0, rt.xterm.rows - 1); } catch {}
+    }
+  }
+}
 
 export function onStatusChange(cb) {
   listeners.add(cb);
@@ -89,7 +99,7 @@ export function ensureRuntime(meta) {
     const xterm = new Terminal({
       fontSize: 13,
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, monospace',
-      theme: XTERM_THEME,
+      theme: { ...xtermTheme() },
       cursorBlink: true,
       scrollback: 8000,
       allowProposedApi: true,

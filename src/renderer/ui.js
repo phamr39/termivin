@@ -11,6 +11,7 @@ import {
 import {
   initHome, renderHome, refreshHome, pulseHomeMap, isHome, updatePeek, closePeek,
 } from './home.js';
+import { THEMES, applyThemeToDom } from './themes.js';
 
 const $ = (sel) => document.querySelector(sel);
 const isWin = window.termivin.platform === 'win32';
@@ -1940,6 +1941,61 @@ export function renderAll() {
   syncBusRoster();
 }
 
+// ------------------------------------------------------------- settings
+// One setting so far: the app theme. Applied instantly on click — DOM via
+// data-theme, live terminals via TM.applyXtermTheme — and persisted.
+
+export function applyTheme(name) {
+  const state = S.getState();
+  state.theme = THEMES[name] ? name : 'termivin';
+  applyThemeToDom(state.theme);
+  TM.applyXtermTheme(state.theme);
+  S.scheduleSave();
+  renderThemeList();
+}
+
+function renderThemeList() {
+  const list = $('#theme-list');
+  if (!list) return;
+  const current = S.getState().theme || 'termivin';
+  list.innerHTML = '';
+  for (const [key, t] of Object.entries(THEMES)) {
+    const card = el('button', 'theme-card' + (key === current ? ' active' : ''));
+    card.dataset.theme = key;
+    const swatches = el('span', 'theme-swatches');
+    for (const c of t.swatches) {
+      const s = el('span', 'theme-swatch');
+      s.style.background = c;
+      swatches.appendChild(s);
+    }
+    const meta = el('span', 'theme-meta');
+    meta.append(el('span', 'theme-name', t.label), el('span', 'theme-desc', t.desc));
+    card.append(swatches, meta);
+    card.addEventListener('click', () => applyTheme(key));
+    list.appendChild(card);
+  }
+}
+
+function setupSettings() {
+  const overlay = $('#settings-overlay');
+  $('#settings-btn').addEventListener('click', () => {
+    renderThemeList();
+    overlay.classList.remove('hidden');
+    syncExternalRects();
+  });
+  const close = () => {
+    overlay.classList.add('hidden');
+    syncExternalRects();
+  };
+  $('#settings-close').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close();
+  });
+}
+
 // Jump to a workspace from anywhere (home map, dashboard, peek header).
 export function switchWorkspace(wsId) {
   closePeek();
@@ -2046,6 +2102,7 @@ export function setupChrome() {
   setupCanvasInteractions();
   setupAttachModal();
   setupConvertModal();
+  setupSettings();
 
   if (isWin) {
     window.termivin.onExternalDropped((info) => handleWindowDropped(info));

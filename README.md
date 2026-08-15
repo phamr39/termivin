@@ -63,6 +63,7 @@ Any unrecognized options are forwarded straight to Electron.
 - **Topics (cross-workspace)** — a topic lives in one workspace and has a *representative* agent. Inside the workspace, `termivin send "#topic" "..."` broadcasts to every agent; from any other workspace it reaches only the representative — one terminal speaks for the workspace to the outside. `termivin topics` lists them; `termivin topic <name> [--rep <agent>]` creates one.
 - **Approval detection** — Termivin watches each terminal's output for permission prompts (Claude Code numbered menus, y/n prompts, "Do you want to…" confirmations). Terminals that are waiting flash orange in the sidebar, tab bar and dashboard, a desktop notification fires, and you can **Approve / Deny from the dashboard's side panel** without opening the terminal.
 - **Any terminal type** — Claude Code, Codex, PowerShell/CMD (Windows), zsh/bash (macOS/Linux), or a custom command.
+- **Themes** — ⚙ in the sidebar footer: Termivin (default), Matrix, Amber CRT, Ice Terminal, or Synthwave. Applies to the whole app, terminals included, and sticks across restarts.
 
 ## Terminal status legend
 

@@ -35,6 +35,7 @@
     "test:dock-groups": "node test/dock-groups.mjs 9223",
     "test:paste": "node test/paste.mjs 9223",
     "test:overlays": "node test/overlays.mjs 9223",
+    "test:themes": "node test/themes.mjs 9223",
     "test:bus-ui": "node test/bus-ui.mjs 9223",
     "test:features": "node test/features.mjs 9223",
     "start:dev": "electron . --user-data-dir=.dev-profile --remote-debugging-port=9223",

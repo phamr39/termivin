@@ -28,6 +28,7 @@
       <div id="workspace-list"></div>
       <div id="sidebar-footer">
         <span id="app-version" title="Termivin version"></span>
+        <button id="settings-btn" class="icon-btn" title="Settings — theme">⚙</button>
       </div>
     </aside>
 
@@ -97,6 +98,19 @@
       <div class="modal-actions">
         <button id="nt-cancel" class="btn btn-ghost">Cancel</button>
         <button id="nt-create" class="btn btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div id="settings-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-title">Settings</div>
+      <div class="settings-section-title">Theme</div>
+      <div class="settings-note">Applies to the whole app — panels, maps, and the terminals themselves.</div>
+      <div id="theme-list" class="theme-list"></div>
+      <div class="modal-actions">
+        <button id="settings-close" class="btn btn-ghost">Close</button>
       </div>
     </div>
   </div>

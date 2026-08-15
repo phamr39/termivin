@@ -4,8 +4,11 @@ import * as S from './state.js';
 import * as TM from './term-manager.js';
 import * as UI from './ui.js';
 
+import { applyThemeToDom } from './themes.js';
+
 async function main() {
   await S.loadState();
+  applyThemeToDom(S.getState().theme); // before any terminal/DOM renders
 
   // Debug/testing hook (harmless in production)
   window.__termivin = { S, TM };

@@ -12,6 +12,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 - **Topics — workspaces can talk to each other.** A topic belongs to one workspace and has a *representative* agent. Inside its workspace, a message to `#topic` is a broadcast every agent hears; from any other workspace it reaches only the representative, so one terminal speaks for the workspace to the outside. Create topics from the dashboard or with `termivin topic <name> [--rep <agent>]`; list with `termivin topics`; send with `termivin send "#topic" "..."`. Topics persist across restarts; a dead representative falls back to a live registered agent.
 - **Dock groups.** Right-click a minimized terminal's chip to group it with others under a named, collapsible header (worst member status shows on the header LED). Rename, restore-all and ungroup live on the header's right-click menu. Groups and collapsed state persist.
 - **Stop process** action in the pane ⋯ menu — stop what's running without removing the terminal.
+- **Themes** — ⚙ in the sidebar footer opens Settings with five app-wide themes: Termivin (default), Matrix (full phosphor green), Amber CRT, Ice Terminal, and Synthwave. A theme restyles everything — panels, maps, and the terminals themselves (live xterm instances repaint on switch) — and persists.
 - App version in the bottom-left corner of the sidebar.
 
 ### Fixed

@@ -29,6 +29,7 @@ const ESM = [
   'src/renderer/dash-data.js',
   'src/renderer/dashboard.js',
   'src/renderer/home.js',
+  'src/renderer/themes.js',
 ];
 
 for (const f of CJS) {
