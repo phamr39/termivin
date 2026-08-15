@@ -92,8 +92,14 @@ export class BusMap {
     const nodeH = isGlobal ? 84 : 56;
 
     // --- layout: hubs in the middle, nodes on a ring ----------------------
-    const rx = Math.max(120, w / 2 - nodeW / 2 - 28);
-    const ry = Math.max(90, h / 2 - nodeH / 2 - 30);
+    // Keep the ring compact: just big enough that chips don't collide, never
+    // stretched to the container edges — a wide window otherwise flings the
+    // nodes apart until the map stops reading as one network.
+    const availRx = Math.max(120, w / 2 - nodeW / 2 - 28);
+    const availRy = Math.max(90, h / 2 - nodeH / 2 - 30);
+    const needed = (nodes.length * (nodeW + 44)) / (2 * Math.PI);
+    const rx = Math.min(availRx, Math.max(210, needed * 1.35));
+    const ry = Math.min(availRy, Math.max(140, needed * 0.95));
     // Few nodes read better spread horizontally (two chips side by side, not
     // stacked on the hub); rings only pay off from ~3 nodes up.
     const startAngle = nodes.length <= 2 ? Math.PI : -Math.PI / 2;

@@ -866,12 +866,34 @@ function restoreMinimized(termId) {
   TM.focusTerminal(termId);
 }
 
+let dragDockId = null; // dock chip currently being dragged
+
+function assignDockGroup(termId, gname) {
+  const found = S.findTerminal(termId);
+  const ws = S.activeWorkspace();
+  if (!found || !ws) return;
+  found.meta.dockGroup = gname;
+  if (gname) delete ws.dockCollapsed[gname]; // reveal the group it just joined
+  S.scheduleSave();
+  renderDock();
+}
+
+// "Group", "Group 2", … for drop-on-chip instant grouping (rename later via
+// the header's right-click menu).
+function autoGroupName(ws) {
+  const used = new Set(ws.terminals.filter((t) => t.dockGroup).map((t) => t.dockGroup.toLowerCase()));
+  if (!used.has('group')) return 'Group';
+  let i = 2;
+  while (used.has('group ' + i)) i++;
+  return 'Group ' + i;
+}
+
 function buildDockChip(t) {
   const info = typeInfo(t.external ? 'external' : t.type);
   const st = TM.getStatus(t.id);
   const chip = el('div', 'dock-chip' + (st === 'approval' ? ' needs-approval' : ''));
   chip.dataset.termId = t.id;
-  chip.title = `${t.name} — click to restore, right-click to group`;
+  chip.title = `${t.name} — click to restore · drag onto a group or another chip to group · right-click for options`;
   const head = el('div', 'dock-head');
   const dot = el('span', 'dot st-' + st);
   const icon = el('span', 'dock-icon', info.icon);
@@ -885,6 +907,49 @@ function buildDockChip(t) {
   chip.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     openDockChipMenu(t.id, e.clientX, e.clientY);
+  });
+
+  // --- drag & drop grouping ---
+  chip.draggable = true;
+  chip.addEventListener('dragstart', (e) => {
+    dragDockId = t.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', t.id);
+    chip.classList.add('dragging');
+    document.body.classList.add('dock-dragging');
+    if (t.dockGroup) document.body.classList.add('dock-dragging-grouped');
+  });
+  chip.addEventListener('dragend', () => {
+    dragDockId = null;
+    chip.classList.remove('dragging');
+    document.body.classList.remove('dock-dragging', 'dock-dragging-grouped');
+    document.querySelectorAll('#dock .drop-target').forEach((x) => x.classList.remove('drop-target'));
+  });
+  // dropping one chip onto another puts both in a group (the target's group,
+  // or a fresh auto-named one)
+  chip.addEventListener('dragover', (e) => {
+    if (dragDockId && dragDockId !== t.id) {
+      e.preventDefault();
+      e.stopPropagation();
+      chip.classList.add('drop-target');
+    }
+  });
+  chip.addEventListener('dragleave', () => chip.classList.remove('drop-target'));
+  chip.addEventListener('drop', (e) => {
+    if (!dragDockId || dragDockId === t.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    chip.classList.remove('drop-target');
+    const ws = S.activeWorkspace();
+    const target = S.findTerminal(t.id);
+    const src = S.findTerminal(dragDockId);
+    if (!ws || !target || !src) return;
+    const gname = target.meta.dockGroup || autoGroupName(ws);
+    target.meta.dockGroup = gname;
+    src.meta.dockGroup = gname;
+    delete ws.dockCollapsed[gname];
+    S.scheduleSave();
+    renderDock();
   });
   return chip;
 }
@@ -916,9 +981,39 @@ function renderDock() {
     }
   }
 
+  // dropping a chip anywhere on the dock outside a group/chip removes it
+  // from its group; the labelled strip below makes that target visible
+  if (!dock.dataset.dnd) {
+    dock.dataset.dnd = '1';
+    dock.addEventListener('dragover', (e) => {
+      if (dragDockId) e.preventDefault();
+    });
+    dock.addEventListener('drop', (e) => {
+      if (!dragDockId) return; // group/chip drops handle + stop propagation
+      e.preventDefault();
+      assignDockGroup(dragDockId, null);
+    });
+  }
+
   for (const [gname, terms] of groups) {
     const collapsed = !!ws.dockCollapsed[gname];
     const box = el('div', 'dock-group' + (collapsed ? ' collapsed' : ''));
+    box.addEventListener('dragover', (e) => {
+      if (dragDockId) {
+        e.preventDefault();
+        box.classList.add('drop-target');
+      }
+    });
+    box.addEventListener('dragleave', (e) => {
+      if (!box.contains(e.relatedTarget)) box.classList.remove('drop-target');
+    });
+    box.addEventListener('drop', (e) => {
+      if (!dragDockId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      box.classList.remove('drop-target');
+      assignDockGroup(dragDockId, gname);
+    });
     const head = el('div', 'dock-group-head');
     const chev = el('span', 'dock-group-chev', collapsed ? '›' : '⌄');
     const label = el('span', 'dock-group-name', gname);
@@ -948,6 +1043,25 @@ function renderDock() {
   }
 
   for (const t of loose) dock.appendChild(buildDockChip(t));
+
+  // visible while dragging a grouped chip: drop here to take it out
+  if (groups.size) {
+    const out = el('div', 'dock-dropout', '⏏ Remove from group');
+    out.addEventListener('dragover', (e) => {
+      if (dragDockId) {
+        e.preventDefault();
+        out.classList.add('drop-target');
+      }
+    });
+    out.addEventListener('dragleave', () => out.classList.remove('drop-target'));
+    out.addEventListener('drop', (e) => {
+      if (!dragDockId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      assignDockGroup(dragDockId, null);
+    });
+    dock.appendChild(out);
+  }
 }
 
 // Right-click menu on a dock chip: assign it to a group (or leave one).

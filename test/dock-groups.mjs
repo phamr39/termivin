@@ -96,6 +96,18 @@ await page.waitForSelector('#workspace-list .ws-item', { timeout: 15000 });
 await page.waitForTimeout(1000);
 check('group survives reload', (await page.textContent('#dock .dock-group-name').catch(() => '')) === 'backend');
 
+// --- drag & drop ------------------------------------------------------------
+// loose chip dropped onto the group box → joins the group
+await page.dragAndDrop(chip(ids.c), '#dock .dock-group');
+await page.waitForTimeout(500);
+check('drag chip onto a group joins it', (await page.textContent('#dock .dock-group-count')) === '3');
+
+// grouped chip dropped on the remove strip → leaves the group
+await page.dragAndDrop(chip(ids.c), '#dock .dock-dropout');
+await page.waitForTimeout(500);
+check('drag to the remove strip ungroups', (await page.textContent('#dock .dock-group-count')) === '2');
+check('chip is loose again', (await page.locator('#dock > .dock-chip').count()) === 1);
+
 // --- ungroup ----------------------------------------------------------------
 await page.click('#dock .dock-group-head', { button: 'right' });
 await page.waitForSelector('.pane-menu');
@@ -103,6 +115,17 @@ await menuItem('Ungroup');
 await page.waitForTimeout(500);
 check('ungroup flattens the dock', (await page.locator('#dock .dock-group').count()) === 0);
 check('all 3 chips loose again', (await page.locator('#dock .dock-chip').count()) === 3);
+
+// dropping one loose chip onto another creates an instant auto-named group
+await page.dragAndDrop(chip(ids.a), chip(ids.b));
+await page.waitForTimeout(500);
+check('chip-on-chip drop creates an auto-named group',
+  (await page.locator('#dock .dock-group').count()) === 1 &&
+  (await page.textContent('#dock .dock-group-name')) === 'Group', {
+    groups: await page.locator('#dock .dock-group').count(),
+    name: await page.textContent('#dock .dock-group-name').catch(() => null),
+  });
+check('auto group holds both chips', (await page.textContent('#dock .dock-group-count')) === '2');
 
 // cleanup
 await page.evaluate(() => {

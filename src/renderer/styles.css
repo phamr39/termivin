@@ -22,8 +22,8 @@
   --map-listen: #3a5c49;
   --map-count: #58c98b;
   --map-signal: #a4ffc9;
-  --map-node-fill: #141d17;
-  --map-node-stroke: #3f7a58;
+  --map-node-fill: #16221b;
+  --map-node-stroke: #4a9268;
   --map-node-stroke-hover: #4ade80;
   --map-node-stroke-dim: #31463a;
   --map-name: #dcf5e6;
@@ -50,7 +50,8 @@ body[data-theme="matrix"] {
   --text-faint: #4d6b58;
   --accent: #2fd970;
   --accent-soft: rgba(47, 217, 112, 0.14);
-  --map-node-fill: #0e1710;
+  --map-node-fill: #101d15;
+  --map-node-stroke: #4d9e6e;
   --map-hub-fill: #0a1f13;
 }
 
@@ -71,7 +72,7 @@ body[data-theme="amber"] {
   --map-count: #d9a253;
   --map-signal: #ffe3ad;
   --map-node-fill: #191106;
-  --map-node-stroke: #8a6a2f;
+  --map-node-stroke: #a8823c;
   --map-node-stroke-hover: #ffc46b;
   --map-node-stroke-dim: #4d3d1d;
   --map-name: #ffe9c4;
@@ -100,7 +101,7 @@ body[data-theme="ice"] {
   --map-count: #5cc4d4;
   --map-signal: #c2f5ff;
   --map-node-fill: #0c181d;
-  --map-node-stroke: #2f6a7a;
+  --map-node-stroke: #3d8ba0;
   --map-node-stroke-hover: #4ddbf0;
   --map-node-stroke-dim: #23444d;
   --map-name: #dcf3f8;
@@ -129,7 +130,7 @@ body[data-theme="synthwave"] {
   --map-count: #c084fc;
   --map-signal: #fbd6ff;
   --map-node-fill: #170f24;
-  --map-node-stroke: #6d4a9e;
+  --map-node-stroke: #8259c2;
   --map-node-stroke-hover: #e879f9;
   --map-node-stroke-dim: #3d2a5c;
   --map-name: #f0e4fb;
@@ -554,6 +555,34 @@ body {
 .dock-group-body { display: flex; flex-direction: column; gap: 6px; }
 .dock-group.collapsed { padding-bottom: 5px; }
 
+/* dock drag & drop grouping */
+.dock-chip.dragging { opacity: 0.45; }
+.dock-chip.drop-target,
+.dock-group.drop-target { border-color: var(--accent); background: var(--accent-soft); }
+.dock-dropout {
+  border: 1px dashed transparent;
+  border-radius: 8px;
+  padding: 2px;
+  height: 8px;
+  overflow: hidden;
+  color: transparent;
+  font-size: 11px;
+  text-align: center;
+  transition: height 0.12s;
+}
+body.dock-dragging-grouped .dock-dropout {
+  height: 30px;
+  padding: 6px;
+  border-color: var(--text-faint);
+  color: var(--text-dim);
+  background: var(--bg-raised);
+}
+.dock-dropout.drop-target {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
 .dialog-input {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -772,7 +801,7 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
 .bm-trace.bm-listen {
   stroke: var(--map-listen);
   stroke-dasharray: 3 7;
-  opacity: 0.55;
+  opacity: 0.75;
   animation: none;
 }
 .bm-trace.bm-hot { opacity: 1; stroke: var(--map-trace-hot); }
@@ -780,6 +809,9 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
   fill: var(--map-count);
   font-size: 10px;
   font-family: var(--font-mono);
+  stroke: var(--bg);
+  stroke-width: 3px;
+  paint-order: stroke;
 }
 .bm-signal { fill: var(--map-signal); }
 
@@ -787,10 +819,10 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
 .bm-node-body {
   fill: var(--map-node-fill);
   stroke: var(--map-node-stroke);
-  stroke-width: 1.5;
+  stroke-width: 2;
   transition: stroke 0.15s;
 }
-.bm-node:hover .bm-node-body { stroke: var(--map-node-stroke-hover); stroke-width: 1.8; }
+.bm-node:hover .bm-node-body { stroke: var(--map-node-stroke-hover); stroke-width: 2.2; }
 .bm-node.bm-dim { opacity: 0.6; }
 .bm-node.bm-dim .bm-node-body { stroke: var(--map-node-stroke-dim); }
 .bm-pin { fill: var(--map-pin); }
@@ -808,7 +840,7 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
 .bm-badge-text { fill: #1a1a1a; font-size: 9.5px; font-weight: 700; font-family: var(--font-mono); }
 
 .bm-hub { cursor: default; }
-.bm-hub-body { fill: var(--map-hub-fill); stroke: var(--map-hub-stroke); stroke-width: 1.6; }
+.bm-hub-body { fill: var(--map-hub-fill); stroke: var(--map-hub-stroke); stroke-width: 2; }
 .bm-hub-pin { fill: var(--map-hub-pin); }
 .bm-hub-label {
   fill: var(--map-hub-label);
@@ -816,7 +848,15 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
   font-weight: 700;
   font-family: var(--font-mono);
 }
-.bm-hub-sub { fill: var(--map-sub); font-size: 10px; font-family: var(--font-mono); }
+.bm-hub-sub {
+  fill: var(--map-sub);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  /* halo so it stays readable when the ring sits close to the bus bar */
+  stroke: var(--bg);
+  stroke-width: 3px;
+  paint-order: stroke;
+}
 
 /* --- side panel --- */
 .wsdash-side {
