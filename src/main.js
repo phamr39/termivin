@@ -648,22 +648,54 @@ ipcMain.handle('os:open-folder', async (event, dir) => {
 // The VS Code CLI is a shim script (`code.cmd` on Windows), and since Node 20
 // spawn() refuses .cmd/.bat unless a shell runs it — so resolve it first and
 // only then hand it to a shell, rather than guessing and failing silently.
+//
+// On macOS the shim is usually missing entirely: it only exists after the user
+// runs "Shell Command: Install 'code' command in PATH", and even then it lands
+// in /usr/local/bin, which a Dock-launched GUI app does not inherit from
+// launchd. Search those directories explicitly, and fall back to `open` below.
+const MAC_BIN_DIRS = ['/usr/local/bin', '/opt/homebrew/bin', '/opt/local/bin'];
+
 function findEditorCmd() {
   const isWin = process.platform === 'win32';
-  const finder = isWin ? 'where' : 'which';
+  const env = { ...process.env };
+  if (process.platform === 'darwin') {
+    env.PATH = [env.PATH || '', ...MAC_BIN_DIRS].filter(Boolean).join(':');
+  }
   for (const name of isWin ? ['code.cmd', 'code'] : ['code']) {
     try {
-      execFileSync(finder, [name], { stdio: ['ignore', 'ignore', 'ignore'] });
-      return name;
+      const found = execFileSync(isWin ? 'where' : 'which', [name],
+        { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split(/\r?\n/)[0];
+      if (!found) continue;
+      // Windows still goes through a shell (the .cmd shim), so keep passing the
+      // bare name there: an absolute path with spaces would need quoting.
+      return isWin ? name : found;
     } catch {}
   }
   return null;
+}
+
+// Without the shim, ask LaunchServices instead. It knows where the app is even
+// when it was never moved to /Applications — including the translocated copy
+// macOS runs a still-quarantined download from, whose path changes every launch
+// and which no PATH entry could ever point at.
+function openInVsCodeApp(dir) {
+  for (const app of ['Visual Studio Code', 'Visual Studio Code - Insiders']) {
+    try {
+      execFileSync('/usr/bin/open', ['-a', app, dir], { stdio: 'ignore' });
+      return true;
+    } catch {}
+  }
+  return false;
 }
 
 ipcMain.handle('os:open-editor', async (event, dir) => {
   if (!dir || !fs.existsSync(dir)) return { ok: false, error: 'Folder not found: ' + (dir || '(none)') };
   const cmd = findEditorCmd();
   if (!cmd) {
+    if (process.platform === 'darwin') {
+      if (openInVsCodeApp(dir)) return { ok: true };
+      return { ok: false, error: 'VS Code was not found. Install it from code.visualstudio.com, or drag it into your Applications folder if you have already downloaded it.' };
+    }
     return {
       ok: false,
       error: "VS Code's `code` command isn't on your PATH. In VS Code run "
@@ -671,12 +703,12 @@ ipcMain.handle('os:open-editor', async (event, dir) => {
     };
   }
   return await new Promise((resolve) => {
-    const child = spawn(cmd, [`"${dir}"`], {
-      detached: true,
-      stdio: 'ignore',
-      shell: true,
-      windowsHide: true,
-    });
+    // Only Windows needs a shell (see findEditorCmd); elsewhere we hold an
+    // absolute path, so spawn it directly and skip the quoting dance.
+    const isWin = process.platform === 'win32';
+    const child = isWin
+      ? spawn(cmd, [`"${dir}"`], { detached: true, stdio: 'ignore', shell: true, windowsHide: true })
+      : spawn(cmd, [dir], { detached: true, stdio: 'ignore' });
     child.once('error', (err) => resolve({ ok: false, error: err.message }));
     child.once('spawn', () => {
       child.unref();

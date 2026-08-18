@@ -3,6 +3,15 @@
 All notable changes to Termivin are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.3.3] — 2026-08-18
+
+Two bugs where code written on Windows met a Mac: one silently ran shell commands, the other could not find an editor that was plainly installed.
+
+### Fixed
+
+- **The agent-bus connect prompt is no longer executed by the shell.** The 🔗 button typed its prompt into the pane and pressed Enter for you — but the pane under it may well be a shell: a `custom` terminal with no command is one, and so is any agent that has exited. zsh, the default shell on macOS, reads the prompt's markdown backticks as command substitution, so clicking 🔗 silently ran `termivin who`, `termivin topics` and — twice — `termivin recv`, which blocks for 60s and drains the agent's mailbox. bash and sh aborted on the prompt's parentheses instead, and PowerShell had its own variant of this in 0.3.0. The button now types without submitting, so nothing runs until you press Enter, and the prompt is written free of shell metacharacters so that pressing it in the wrong pane is a plain "command not found" rather than a hidden command.
+- **macOS: "Open in VS Code" works without installing the `code` shim.** The menu item resolved the editor with `which code`, which asks the main process's own PATH — and a GUI app launched from the Dock inherits launchd's bare PATH, so even an installed shim in `/usr/local/bin` was invisible. Those directories are now searched explicitly, and when there is no shim at all Termivin asks macOS to open the folder in VS Code, which works even for a copy that never made it to `/Applications`.
+
 ## [0.3.2] — 2026-08-18
 
 ### Added

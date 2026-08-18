@@ -126,6 +126,7 @@ await page.waitForSelector('.dialog-overlay:not(.hidden)', { timeout: 3000 });
 const dialogText = await page.textContent('.dialog-message');
 check('confirm names the target terminal', dialogText.includes('BusAlpha'), dialogText);
 check('confirm names the peer count', /1 other agent/.test(dialogText), dialogText);
+check('confirm says the prompt is not submitted', /press Enter yourself/.test(dialogText), dialogText);
 await page.click('.dialog-ok');
 await page.waitForTimeout(2500);
 
@@ -138,8 +139,13 @@ const flat = squash(screen);
 check('prompt landed in the terminal', flat.includes(squash('termivin register')), screen.slice(-300));
 check('prompt carries the workspace name', flat.includes(squash(wsName)), screen.slice(-400));
 check('prompt lists the peer', flat.includes('BusBeta'), screen.slice(-400));
-// The prompt must be a single line: a newline submits, so a multi-line prompt
-// is chopped into fragments and drops a shell into its `>>` continuation.
+// The button types but never submits: the pane may be a bare shell, where a
+// submitted line runs. Nothing should have executed — the give-away being the
+// shell's own complaint about the prompt's first word.
+check('prompt was typed, not submitted', !/command not found|not recognized/i.test(screen),
+  screen.slice(-200));
+// A single line, too: a newline is a submit, so a multi-line prompt would be
+// chopped into fragments and drop a shell into its `>>` continuation.
 check('prompt did not open a continuation prompt', !/\n>>/.test(screen), screen.slice(-200));
 
 // --- a message sent from the bus reaches the agent -----------------------

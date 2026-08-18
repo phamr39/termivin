@@ -252,24 +252,30 @@ if (isWin) {
   `);
 }
 
-const codeAvailable = (() => {
-  try {
-    execFileSync(isWin ? 'where' : 'which', [isWin ? 'code.cmd' : 'code'],
-      { stdio: ['ignore', 'ignore', 'ignore'] });
-    return true;
-  } catch { return false; }
+// Whether an editor is reachable at all: the `code` shim, or on macOS any
+// installed VS Code, which the resolver now opens via LaunchServices.
+const editorAvailable = (() => {
+  const probe = (bin, args) => {
+    try {
+      execFileSync(bin, args, { stdio: ['ignore', 'ignore', 'ignore'] });
+      return true;
+    } catch { return false; }
+  };
+  if (probe(isWin ? 'where' : 'which', [isWin ? 'code.cmd' : 'code'])) return true;
+  // `open -Ra` reveals the app instead of launching it, so this stays silent.
+  return process.platform === 'darwin' && probe('/usr/bin/open', ['-Ra', 'Visual Studio Code']);
 })();
 const openEditorMissing = await page.evaluate((d) => window.termivin.openInEditor(d),
   path.join(probeDir, 'does-not-exist'));
 check('open in VS Code reports a missing folder', openEditorMissing.ok === false, openEditorMissing);
-if (codeAvailable) {
+if (editorAvailable) {
   // Only assert the resolver+spawn path; launching a real editor window here
   // would litter the user's desktop, so this is deliberately not exercised.
   skip('open in VS Code happy path (would open a real editor window)');
 } else {
   const res = await page.evaluate((d) => window.termivin.openInEditor(d), probeDir);
-  check('open in VS Code explains a missing `code` CLI',
-    res.ok === false && /PATH/.test(res.error), res);
+  check('open in VS Code explains that it cannot find the editor',
+    res.ok === false && /PATH|not found/.test(res.error), res);
 }
 
 // ------------------------------------------------------------- copy / paste

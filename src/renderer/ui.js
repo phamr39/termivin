@@ -219,20 +219,28 @@ export function syncBusRoster() {
 // Deliberately ONE line: a newline is a submit in every terminal, so a
 // multi-line prompt gets chopped into fragments — and in a shell it drops into
 // a continuation prompt and eats the rest.
+//
+// And deliberately free of shell metacharacters. The pane under this button is
+// whatever the user pointed it at, which may be a bare shell — a `custom`
+// terminal with no command is exactly that, and so is any agent that has since
+// exited. Markdown backticks read well to an agent but are command
+// substitution to zsh, so `termivin recv --wait 60` quietly ran and drained the
+// mailbox; parentheses are a syntax error in bash and a subexpression in
+// PowerShell; `<name>` is a redirect. Quote marks are the one safe emphasis.
 function connectPrompt(ws, self, peers) {
   const others = peers.length
-    ? peers.map((p) => `${p.name} (${p.type})`).join(', ')
+    ? peers.map((p) => `${p.name} - ${p.type}`).join(', ')
     : 'none yet, you are the first';
   return [
     `You are agent "${self.name}" in the Termivin workspace "${ws.name}",`,
     'which has a local message bus the agents here use to talk to each other.',
     `Peers right now: ${others}.`,
-    'Join it by running: termivin register --role "<one line: what you are working on and which files you own>".',
-    'Then: `termivin who` lists your teammates;',
-    '`termivin send <name> "..."` messages one agent (use @all to broadcast, add --ask for a question);',
-    '`termivin recv --wait 60` blocks up to 60s waiting for messages;',
-    '`termivin topics` lists cross-workspace topics — message one with: termivin send "#topic" "...".',
-    'Run `termivin recv` whenever you finish a task or are about to wait on something —',
+    'Join it by running: termivin register --role "one line: what you are working on and which files you own".',
+    "Then: 'termivin who' lists your teammates;",
+    '\'termivin send NAME "..."\' messages one agent — use @all to broadcast, add --ask for a question;',
+    "'termivin recv --wait 60' blocks up to 60s waiting for messages;",
+    '\'termivin topics\' lists cross-workspace topics — message one with: termivin send "#topic" "...".',
+    "Run 'termivin recv' whenever you finish a task or are about to wait on something —",
     'nothing pushes messages into your session, so unread mail sits there until you look.',
     'Do not reply to broadcasts unless the message asks you to.',
   ].join(' ');
@@ -268,15 +276,18 @@ async function connectAgent(termId) {
   const ok = await uiConfirm(
     `Type the bus connection prompt into "${meta.name}"?\n\n` +
     `It will be asked to register itself in workspace "${ws.name}"` +
-    (peers.length ? ` alongside ${peers.length} other agent(s).` : ' as the first agent.'),
+    (peers.length ? ` alongside ${peers.length} other agent(s).` : ' as the first agent.') +
+    '\n\nThe text is typed but not submitted — read it over, then press Enter yourself.',
     { title: 'Connect to agent bus', okLabel: 'Type it' }
   );
   if (!ok) return;
 
-  // Send the prompt as one paste-like write, then Enter separately so a CLI
-  // that reflows multi-line input has a frame to settle.
+  // Typed, never submitted. This button cannot know what is really listening in
+  // the pane — an agent CLI, or the shell left behind after one exited — and a
+  // submitted line means something very different to each. Handing the Enter
+  // back to the user costs one keystroke, lets them edit the prompt first, and
+  // is the only thing that makes the wrong pane harmless on every shell.
   TM.sendKeys(termId, connectPrompt(ws, meta, peers));
-  setTimeout(() => TM.sendKeys(termId, '\r'), 120);
   TM.focusTerminal(termId);
 }
 
