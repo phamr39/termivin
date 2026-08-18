@@ -15,6 +15,21 @@ const page = cdp.contexts()[0].pages().find((p) => p.url().includes('index.html'
 page.on('dialog', (d) => d.accept());
 await page.waitForSelector('.ws-item', { timeout: 10000 });
 
+// Every selector below is the *first* .ws-item, so make that one both active and
+// on its canvas. Otherwise the first click of a dblclick switches workspace, the
+// sidebar re-renders under it, and the second click lands on a new node — plus
+// #new-terminal-btn is hidden on Home and on the dashboard.
+await page.evaluate(() => {
+  const S = window.__termivin.S;
+  const state = S.getState();
+  state.appView = 'ws';
+  state.activeWorkspaceId = state.workspaces[0].id;
+  state.workspaces[0].view = 'canvas';
+  document.querySelectorAll('.modal-overlay').forEach((o) => o.classList.add('hidden'));
+});
+await page.reload();
+await page.waitForSelector('.ws-item', { timeout: 10000 });
+
 // Type the way a person does. page.fill() writes the value straight through
 // CDP, which skips the click entirely — that is how a rename box you literally
 // could not click into still passed this suite.

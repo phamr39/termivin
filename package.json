@@ -1,7 +1,7 @@
 {
   "name": "termivin",
   "productName": "Termivin",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Workspace manager for terminals, optimized for AI CLI clients (Claude Code, Codex)",
   "keywords": [
     "terminal",

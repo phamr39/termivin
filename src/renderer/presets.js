@@ -66,6 +66,44 @@ export function typeInfo(type) {
   return TYPES[type] || TYPES.custom;
 }
 
+// --- Claude Code permission modes -----------------------------------------
+// Inside a session Shift+Tab cycles these, but reaching auto mode that way
+// costs three keystrokes and a confirmation dialog every single time, and the
+// choice is forgotten when the session is restored. Passing the mode on the
+// command line instead makes it part of the terminal's saved command, so a
+// restored terminal comes back in the same mode. Values are exactly what
+// `claude --permission-mode` accepts.
+export const PERMISSION_MODES = [
+  { value: '', label: 'Ask each time (default)' },
+  { value: 'auto', label: 'Auto — Claude vets each call' },
+  { value: 'acceptEdits', label: 'Accept file edits' },
+  { value: 'plan', label: 'Plan only' },
+];
+
+// Only Claude Code takes this flag. Codex spells its equivalent differently, so
+// it keeps using a hand-written startup command.
+export function supportsPermissionMode(type) {
+  return type === 'claude';
+}
+
+const MODE_FLAG = /\s*--permission-mode(?:=|\s+)[A-Za-z]+/g;
+
+// Rewrite a startup/restore command to carry exactly one --permission-mode flag
+// (or none). Editing the command by hand still works — this only ever touches
+// that flag.
+export function withPermissionMode(command, mode) {
+  const bare = String(command || '').replace(MODE_FLAG, '').trim();
+  if (!bare || !mode) return bare;
+  return bare + ' --permission-mode ' + mode;
+}
+
+// What the mode dropdown should show for an existing command (clone / edit).
+export function readPermissionMode(command) {
+  const m = /--permission-mode(?:=|\s+)([A-Za-z]+)/.exec(String(command || ''));
+  const found = m ? m[1] : '';
+  return PERMISSION_MODES.some((p) => p.value === found) ? found : '';
+}
+
 // --- Name generators ------------------------------------------------------
 
 export const WORKSPACE_NAMES = [

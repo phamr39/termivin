@@ -3,7 +3,10 @@
 
 import * as S from './state.js';
 import * as TM from './term-manager.js';
-import { TYPES, typeInfo, isAgentType, randomWorkspaceName, randomTerminalName } from './presets.js';
+import {
+  TYPES, typeInfo, isAgentType, randomWorkspaceName, randomTerminalName,
+  PERMISSION_MODES, supportsPermissionMode, withPermissionMode, readPermissionMode,
+} from './presets.js';
 import { initDashData, onBusEvent } from './dash-data.js';
 import {
   initWorkspaceDashboard, renderWorkspaceDashboard, refreshWorkspaceDashboard, pulseWorkspaceMap,
@@ -1961,12 +1964,30 @@ export function setupModal() {
     typeSel.appendChild(opt);
   }
 
+  const modeSel = $('#nt-mode');
+  modeSel.innerHTML = '';
+  for (const m of PERMISSION_MODES) {
+    const opt = el('option', null, m.label);
+    opt.value = m.value;
+    modeSel.appendChild(opt);
+  }
+
   const applyPreset = () => {
     const info = typeInfo(typeSel.value);
     $('#nt-command').value = info.command || '';
     $('#nt-restore').value = info.restoreCommand || '';
+    modeSel.value = '';
+    syncModeRow(typeSel.value);
   };
   typeSel.addEventListener('change', applyPreset);
+
+  // The mode drives the two command fields rather than being stored separately:
+  // the flag then travels with the command through save/restore and clone, with
+  // no extra state to migrate.
+  modeSel.addEventListener('change', () => {
+    $('#nt-command').value = withPermissionMode($('#nt-command').value, modeSel.value);
+    $('#nt-restore').value = withPermissionMode($('#nt-restore').value, modeSel.value);
+  });
 
   $('#nt-browse').addEventListener('click', async () => {
     // Start the picker at whatever is already typed (a cloned terminal
@@ -1991,6 +2012,12 @@ export function setupModal() {
   $('#empty-new-terminal').addEventListener('click', open);
 }
 
+// Only Claude Code understands --permission-mode, so the row would be a trap on
+// any other type.
+function syncModeRow(type) {
+  $('#nt-mode-row').classList.toggle('hidden', !supportsPermissionMode(type));
+}
+
 // prefill: clone flow — seed the fields from an existing terminal instead of
 // the type preset, and let the user adjust before creating.
 export function openModal(prefill = null) {
@@ -2010,6 +2037,8 @@ export function openModal(prefill = null) {
   $('#nt-restore').value = prefill ? prefill.restoreCommand || '' : info.restoreCommand;
   $('#nt-cwd').value = (prefill && prefill.cwd) || lastUsedCwd || window.termivin.homedir;
   $('#nt-autorestore').checked = prefill ? prefill.autoRestore !== false : true;
+  $('#nt-mode').value = readPermissionMode($('#nt-command').value);
+  syncModeRow(type);
   $('#nt-name').focus();
 }
 

@@ -83,6 +83,17 @@ const ctx = cdp.contexts()[0];
 const page = ctx.pages().find((p) => p.url().includes('index.html')) || ctx.pages()[0];
 
 await page.waitForSelector('.ws-item', { timeout: 15000 });
+
+// Land on a workspace canvas: the toolbar buttons this suite clicks are hidden
+// on Home and on the dashboard, where an earlier suite may have left the app.
+await page.evaluate(() => {
+  const S = window.__termivin.S;
+  S.getState().appView = 'ws';
+  S.activeWorkspace().view = 'canvas';
+  document.querySelectorAll('.modal-overlay').forEach((o) => o.classList.add('hidden'));
+});
+await page.reload();
+await page.waitForSelector('.ws-item', { timeout: 15000 });
 ok('window is up: ' + (await page.textContent('.ws-item .ws-name')).trim());
 
 // A folder that certainly exists and is safe to open.
@@ -365,6 +376,51 @@ await page.waitForSelector('#modal-overlay:not(.hidden)');
 const clonedCwd = await page.inputValue('#nt-cwd');
 check('clone prefills the source folder', clonedCwd === probeDir, { clonedCwd, probeDir });
 await page.click('#nt-cancel');
+
+// ------------------------------------------- Claude Code permission mode
+// The dropdown's whole job is to put --permission-mode into the two command
+// fields, so that a restored terminal comes back in the same mode.
+await page.click('#new-terminal-btn');
+await page.waitForSelector('#modal-overlay:not(.hidden)');
+await page.selectOption('#nt-type', 'claude');
+check('permission mode offered for Claude Code', await page.isVisible('#nt-mode-row'));
+await page.selectOption('#nt-type', 'shell');
+check('permission mode hidden for a plain shell', !(await page.isVisible('#nt-mode-row')));
+
+await page.selectOption('#nt-type', 'claude');
+await page.selectOption('#nt-mode', 'auto');
+const autoCmd = await page.inputValue('#nt-command');
+const autoRestore = await page.inputValue('#nt-restore');
+check('auto mode reaches the startup command', autoCmd === 'claude --permission-mode auto', autoCmd);
+check('auto mode reaches the restore command',
+  autoRestore === 'claude --continue --permission-mode auto', autoRestore);
+
+// Switching mode must replace the flag, never stack a second one.
+await page.selectOption('#nt-mode', 'plan');
+check('changing mode replaces the flag',
+  (await page.inputValue('#nt-command')) === 'claude --permission-mode plan',
+  await page.inputValue('#nt-command'));
+await page.selectOption('#nt-mode', '');
+check('back to default drops the flag',
+  (await page.inputValue('#nt-command')) === 'claude', await page.inputValue('#nt-command'));
+
+// A terminal created in auto mode reopens the modal (via clone) already showing it.
+await page.selectOption('#nt-mode', 'auto');
+await page.fill('#nt-cwd', probeDir);
+await page.click('#nt-create');
+await page.waitForTimeout(1500);
+const autoPane = '.pane[data-term-id]:not(.hidden)';
+await page.locator(autoPane).last().locator('.pane-clone').click();
+await page.waitForSelector('#modal-overlay:not(.hidden)');
+check('cloning an auto-mode terminal keeps the mode selected',
+  (await page.inputValue('#nt-mode')) === 'auto', await page.inputValue('#nt-mode'));
+await page.click('#nt-cancel');
+await page.evaluate(() => {
+  const S = window.__termivin.S, TM = window.__termivin.TM;
+  const ws = S.activeWorkspace();
+  const t = ws.terminals[ws.terminals.length - 1];
+  if (t) { TM.disposeTerminal(t.id); S.removeTerminal(t.id); }
+});
 
 await cdp.close();
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

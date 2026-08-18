@@ -3,6 +3,16 @@
 All notable changes to Termivin are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.3.2] — 2026-08-18
+
+### Added
+
+- **Permission mode for Claude Code terminals.** The new-terminal dialog gained a *Permission mode* dropdown — auto, accept-edits, plan, or the default ask-every-time — which writes `--permission-mode` into both the startup and the restore command. `Shift+Tab` already cycled these inside a session, but the choice was lost on every session restore, and reaching auto mode again cost three keystrokes and a confirmation each time.
+
+### Fixed
+
+- Two E2E suites assumed the app was already sitting on the first workspace's canvas, so they failed or hung depending on which suite ran before them. `rename` was the worst case: with a second workspace active, the first click of a double-click switched workspace and the sidebar re-rendered out from under the second.
+
 ## [0.3.1] — 2026-08-15
 
 Termivin behaves like a native Mac app: it is named Termivin everywhere, its terminals find the tools your shell profile installs, and ⌘C copies.
