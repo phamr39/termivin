@@ -55,6 +55,13 @@ export function renderWorkspaceDashboard() {
           <div class="side-rows" id="wsdash-terms"></div>
         </section>
         <section class="side-card">
+          <div class="side-title">Awaiting reply
+            <span class="side-title-count" id="wsdash-asks-count"></span>
+          </div>
+          <div class="side-rows" id="wsdash-asks"></div>
+          <div class="side-hint">Push types <code>termivin recv --wait 60</code> into the agent — press Enter yourself to run it.</div>
+        </section>
+        <section class="side-card">
           <div class="side-title">Topics
             <button class="btn btn-ghost btn-sm side-title-btn" id="wsdash-newtopic">+ New</button>
           </div>
@@ -106,6 +113,7 @@ export async function refreshWorkspaceDashboard(force = false) {
     drawMap(ws, stats);
     drawTiles(ws, proc);
     drawTermRows(ws, proc, tok);
+    drawAwaitingReply(ws, stats);
     drawTopics(ws, stats);
     drawTokens(ws, tok);
     drawFeed(ws, stats);
@@ -296,6 +304,85 @@ function drawTermRows(ws, proc, tok) {
     }
     row.title = `${t.name} — click to open in canvas`;
     row.addEventListener('click', () => hooks.openInCanvas(t.id));
+    box.appendChild(row);
+  }
+}
+
+// Open asks (kind='ask' the recipient hasn't replied to yet) + agents with
+// unread mail waiting in their bus queue. Every row has a Push button that
+// types `termivin recv --wait 60` into the recipient's pane — the fix for the
+// "agent stops responding after a while" problem, which really is "the agent
+// forgot to poll and the message is sitting in its queue unread".
+function drawAwaitingReply(ws, stats) {
+  const box = document.getElementById('wsdash-asks');
+  const countEl = document.getElementById('wsdash-asks-count');
+  if (!box) return;
+  box.innerHTML = '';
+  const termIds = new Set(ws.terminals.map((t) => t.id));
+  const asks = (stats.openAsks || []).filter(
+    (a) => termIds.has(a.to) || termIds.has(a.from));
+  // Roll in "has unread mail but no explicit ask waiting" so the same panel
+  // covers both cases: an outright question, and a note that just piled up.
+  const seenAgents = new Set(asks.map((a) => a.to));
+  const mailOnly = stats.agents.filter(
+    (a) => a.space === ws.id && a.pending > 0 && !seenAgents.has(a.id));
+
+  const total = asks.length + mailOnly.length;
+  if (countEl) countEl.textContent = total ? String(total) : '';
+  if (!total) {
+    box.appendChild(el('div', 'side-empty', 'No pending questions or unread messages.'));
+    return;
+  }
+
+  const nudgeableInWorkspace = (termId) => termIds.has(termId);
+
+  for (const a of asks) {
+    const row = el('div', 'side-ask');
+    const dot = el('span', 'dot ask-dot');
+    const who = el('div', 'side-ask-who');
+    who.append(
+      el('span', 'side-ask-from', a.fromName || '?'),
+      el('span', 'side-ask-arrow', ' → '),
+      el('span', 'side-ask-to', a.toName || '?'));
+    const meta = el('div', 'side-ask-meta',
+      (a.subject ? a.subject + ' · ' : '') + 'waiting ' + fmtAgo(a.ts));
+    if (a.body) meta.title = a.body;
+    const info = el('div', 'side-ask-info');
+    info.append(who, meta);
+    row.append(dot, info);
+    if (nudgeableInWorkspace(a.to)) {
+      const push = el('button', 'btn btn-primary btn-sm side-ask-push', '📬 Push');
+      push.title = `Type 'termivin recv --wait 60' into ${a.toName || 'the agent'}'s pane`;
+      push.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hooks.nudgeAgent(a.to);
+      });
+      row.append(push);
+    } else {
+      row.append(el('span', 'side-ask-remote', 'other workspace'));
+    }
+    box.appendChild(row);
+  }
+
+  for (const a of mailOnly) {
+    const row = el('div', 'side-ask');
+    const dot = el('span', 'dot ask-dot ask-dot-mail');
+    const who = el('div', 'side-ask-who');
+    who.append(
+      el('span', 'side-ask-to', a.name || '?'),
+      el('span', 'side-ask-arrow', ' has '),
+      el('span', 'side-ask-from', String(a.pending) + ' unread'));
+    const meta = el('div', 'side-ask-meta', 'message(s) sitting in their bus queue');
+    const info = el('div', 'side-ask-info');
+    info.append(who, meta);
+    row.append(dot, info);
+    const push = el('button', 'btn btn-primary btn-sm side-ask-push', '📬 Push');
+    push.title = `Type 'termivin recv --wait 60' into ${a.name}'s pane`;
+    push.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hooks.nudgeAgent(a.id);
+    });
+    row.append(push);
     box.appendChild(row);
   }
 }

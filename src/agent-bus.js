@@ -49,6 +49,47 @@ const spaceLinks = new Map(); // 'fromSpaceId>toSpaceId' -> count (cross-space o
 const recentMessages = []; // ring buffer of the last RECENT_MAX deliveries
 const RECENT_MAX = 200;
 
+// Asks waiting for a reply — key is `corr || msgId`. The dashboard shows these
+// as "N is still waiting for a reply from M" and offers a Nudge button. An entry
+// is cleared as soon as any message tagged with the matching `corr` is
+// delivered, and expires after ASK_TTL_MS so a forgotten ask doesn't stay red
+// forever. Reset on app start; rebuilt when logs replay.
+const outstandingAsks = new Map();
+const ASK_TTL_MS = 60 * 60 * 1000;
+
+function askKeyFor(msg) {
+  return msg.corr || msg.id;
+}
+
+// The receiver's `to` isn't on the msg passed to bumpTraffic-style helpers,
+// so callers pass the fully-resolved (msg, toId, toName) triple.
+function recordAsk(msg, toId, toName, fromSpace, toSpace) {
+  const key = askKeyFor(msg);
+  if (!key) return;
+  outstandingAsks.set(key, {
+    key,
+    corr: msg.corr || msg.id,
+    from: msg.from,
+    fromName: msg.fromName,
+    fromSpace,
+    to: toId,
+    toName,
+    toSpace,
+    subject: msg.subject || '',
+    body: (msg.body || '').slice(0, 400),
+    ts: msg.ts,
+  });
+}
+
+function clearAsk(corr) {
+  if (corr && outstandingAsks.has(corr)) outstandingAsks.delete(corr);
+}
+
+function pruneAsks() {
+  const cutoff = Date.now() - ASK_TTL_MS;
+  for (const [k, a] of outstandingAsks) if (a.ts < cutoff) outstandingAsks.delete(k);
+}
+
 function bumpTraffic(fromId, toId, fromSpace, toSpace) {
   const key = fromId + '>' + toId;
   linkCounts.set(key, (linkCounts.get(key) || 0) + 1);
@@ -197,6 +238,12 @@ function replayLogs() {
         // feed survive a restart instead of starting from a blank network.
         const m = rec.msg;
         bumpTraffic(m.from, rec.to, rec.fs || spaceId, spaceId);
+        // Same for open asks — a "please reply" that outlived the app restart
+        // should still appear on the dashboard so the user can nudge for it.
+        if (m.corr) clearAsk(m.corr);
+        if (m.kind === 'ask') {
+          recordAsk(m, rec.to, m.toName, rec.fs || spaceId, spaceId);
+        }
         replayedRecent.push({
           ts: m.ts,
           from: m.from,
@@ -218,6 +265,7 @@ function replayLogs() {
   }
   replayedRecent.sort((a, b) => a.ts - b.ts);
   recentMessages.push(...replayedRecent.slice(-RECENT_MAX));
+  pruneAsks();
 }
 
 // --- profile persistence ----------------------------------------------------
@@ -266,35 +314,57 @@ function deliver(toId, msg, spaceId) {
     broadcast: !!msg.broadcast,
   });
   if (recentMessages.length > RECENT_MAX) recentMessages.splice(0, recentMessages.length - RECENT_MAX);
+  // Any tagged reply closes the outstanding ask, regardless of who sends it.
+  if (msg.corr) clearAsk(msg.corr);
+  if (msg.kind === 'ask') recordAsk(msg, toId, msg.toName, fromSpace, spaceId);
   onEvent({
     type: 'msg', from: msg.from, to: toId, fromSpace, toSpace: spaceId,
-    topic: msg.topic || null, kind: msg.kind,
+    topic: msg.topic || null, kind: msg.kind, corr: msg.corr || null,
   });
   const waiter = waiters.get(toId);
   if (waiter) {
     waiters.delete(toId);
     clearTimeout(waiter.timer);
-    // Anything already queued goes out with it, and this message needs its own
-    // deliver record — it never passes through the queue, so without this it
-    // would be replayed as unread after a restart.
-    const queued = drain(toId, spaceId);
-    append(spaceId, { t: 'deliver', id: msg.id, to: toId });
+    // Anything already queued goes out with the fresh message. The deliver
+    // records are written by the /recv handler once the response is confirmed
+    // in flight — writing them here would mark messages read even when the
+    // client already went away, and the agent would then never see them.
+    const queued = peekQueue(toId);
     waiter.resolve([...queued, msg]);
   } else {
     queueFor(toId).push(msg);
-    onEvent({ type: 'mail', to: toId, from: msg.fromName, subject: msg.subject });
+    onEvent({
+      type: 'mail', to: toId, toName: msg.toName, toSpace: spaceId,
+      from: msg.from, fromName: msg.fromName, subject: msg.subject,
+      kind: msg.kind, corr: msg.corr || null,
+    });
   }
 }
 
-// Hand the queue to a caller and mark those messages delivered. At-most-once:
-// if the agent dies right after, the message is gone from the queue but still
-// readable in the log.
-function drain(id, spaceId) {
+// Return every queued message for id WITHOUT marking any of them delivered.
+// The caller must confirm delivery once the response has actually left the
+// server (see confirmDelivered / returnUndelivered) — otherwise a client that
+// disconnects mid-response would silently lose messages that the log already
+// marked read.
+function peekQueue(id) {
   const q = pending.get(id) || [];
   pending.set(id, []);
-  for (const m of q) append(spaceId, { t: 'deliver', id: m.id, to: id });
-  if (q.length) onEvent({ type: 'read', by: id });
   return q;
+}
+
+function confirmDelivered(id, spaceId, msgs) {
+  if (!msgs.length) return;
+  for (const m of msgs) append(spaceId, { t: 'deliver', id: m.id, to: id });
+  onEvent({ type: 'read', by: id });
+}
+
+// The client went away before it received the batch — put it back at the front
+// so the next /recv sees it. Preserves ordering with anything that arrived in
+// the meantime.
+function returnUndelivered(id, msgs) {
+  if (!msgs.length) return;
+  const q = pending.get(id) || [];
+  pending.set(id, [...msgs, ...q]);
 }
 
 function allowed(id) {
@@ -356,6 +426,22 @@ function send(res, code, body) {
     'content-length': Buffer.byteLength(payload),
   });
   res.end(payload);
+}
+
+// send() plus the delivery bookkeeping: only mark the batch delivered once the
+// bytes have actually flushed, and put them back on the queue if the client
+// dropped the connection first. Without this, a socket that dies as we write
+// leaves the messages "delivered" in the log but never seen by the agent —
+// which was the reason a running agent would go quiet mid-session.
+function sendMessages(res, id, spaceId, messages) {
+  let settled = false;
+  res.on('close', () => {
+    if (settled) return;
+    settled = true;
+    if (res.writableFinished) confirmDelivered(id, spaceId, messages);
+    else returnUndelivered(id, messages);
+  });
+  send(res, 200, { messages });
 }
 
 function readBody(req) {
@@ -497,8 +583,8 @@ async function handle(req, res) {
 
   if (route === '/recv' && req.method === 'GET') {
     const space = roster.get(me).spaceId;
-    const queued = drain(me, space);
-    if (queued.length) return send(res, 200, { messages: queued });
+    const immediate = peekQueue(me);
+    if (immediate.length) return sendMessages(res, me, space, immediate);
 
     const wait = Math.min(Math.max(Number(parsed.searchParams.get('wait')) || 0, 0), MAX_WAIT_MS / 1000);
     if (!wait) return send(res, 200, { messages: [] });
@@ -523,8 +609,14 @@ async function handle(req, res) {
         }
       });
     });
-    if (res.writableEnded) return;
-    return send(res, 200, { messages });
+    if (res.writableEnded) {
+      // Client closed the poll before we could reply — the messages that
+      // arrived during the wait must go back on the queue, otherwise the next
+      // recv sees nothing and the agent silently loses them.
+      returnUndelivered(me, messages);
+      return;
+    }
+    return sendMessages(res, me, space, messages);
   }
 
   return send(res, 404, { error: 'no such route' });
@@ -555,6 +647,7 @@ function describeTopics() {
 
 // Everything the dashboard maps need in one call.
 function stats() {
+  pruneAsks();
   return {
     agents: [...roster.keys()].map(describe).filter(Boolean).map((a) => ({
       ...a,
@@ -571,6 +664,10 @@ function stats() {
       return { from, to, count };
     }),
     recent: recentMessages.slice(-60),
+    // Asks the recipient hasn't replied to yet — the dashboard renders these
+    // as "N is waiting on M" rows with a Nudge button that types
+    // `termivin recv` into M's pane.
+    openAsks: [...outstandingAsks.values()].sort((a, b) => a.ts - b.ts),
   };
 }
 
@@ -653,6 +750,7 @@ function stop() {
   agentTraffic.clear();
   spaceLinks.clear();
   recentMessages.length = 0;
+  outstandingAsks.clear();
   roster = new Map();
   if (server) {
     try { server.close(); } catch {}

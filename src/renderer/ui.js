@@ -246,6 +246,38 @@ function connectPrompt(ws, self, peers) {
   ].join(' ');
 }
 
+// Dashboard's "Push" button lands here — type `termivin recv --wait 60` into
+// the target agent's pane (without pressing Enter) so the user can send it
+// with one keystroke after glancing at what is queued. Same guardrail as
+// connectAgent: never inject while the pane is at an approval prompt, because
+// Enter would answer that prompt instead.
+export async function nudgeAgent(termId) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  const { meta } = found;
+  const status = TM.getStatus(termId);
+  if (status === 'approval') {
+    await uiAlert(
+      `"${meta.name}" is waiting for your approval. Answer that prompt first — ` +
+      'typing now would submit an answer to it.',
+      { title: 'Cannot nudge yet' }
+    );
+    return;
+  }
+  if (status !== 'idle' && status !== 'working') {
+    await uiAlert(
+      `"${meta.name}" is not running (${STATUS_LABEL[status] || status}). Start it first.`,
+      { title: 'Cannot nudge yet' }
+    );
+    return;
+  }
+  // Typed, not submitted. Same reasoning as connectAgent — the pane may be a
+  // bare shell after an agent exited, or a Claude prompt with a half-typed
+  // reply; an unattended Enter could do the wrong thing in either case.
+  TM.sendKeys(termId, 'termivin recv --wait 60');
+  openInCanvas(termId);
+}
+
 async function connectAgent(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
@@ -2184,6 +2216,7 @@ export function setupChrome() {
     uiPrompt,
     uiConfirm,
     uiAlert,
+    nudgeAgent,
   };
   initWorkspaceDashboard(uiHooks);
   initHome(uiHooks);
