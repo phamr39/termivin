@@ -142,6 +142,71 @@ body[data-theme="synthwave"] {
   --map-hub-pin: #9a5fd0;
 }
 
+body[data-theme="sakura"] {
+  --bg: #251820;
+  --bg-raised: #35222d;
+  --bg-panel: #2c1c26;
+  --border: #4a2f3c;
+  --border-strong: #6b4560;
+  --text: #ffe0ec;
+  --text-dim: #d4b0c2;
+  --text-faint: #8a6a78;
+  --accent: #ffc9de;
+  --accent-soft: rgba(255, 201, 222, 0.18);
+  --map-trace: #ffc9de;
+  --map-trace-hot: #ffe0ec;
+  --map-listen: #5a3145;
+  --map-count: #ff9ecb;
+  --map-signal: #fff2f7;
+  --map-node-fill: #2f1c28;
+  --map-node-stroke: #b0798f;
+  --map-node-stroke-hover: #ffc9de;
+  --map-node-stroke-dim: #4a2f3c;
+  --map-name: #fff2f7;
+  --map-sub: #d4b0c2;
+  --map-pin: #8f5c74;
+  --map-hub-fill: #3a2130;
+  --map-hub-stroke: #ffb3d1;
+  --map-hub-label: #fff2f7;
+  --map-hub-pin: #b07a92;
+}
+
+/* Cotton Candy is Termivin's first light theme — a proper pastel needs a
+   pale background, so many "assumed dark" defaults invert: text goes plum,
+   halos land light, and the accent picks up saturation because a pale pink
+   on pale pink would vanish on button backgrounds. */
+body[data-theme="cottoncandy"] {
+  --bg: #f5e6ec;
+  --bg-raised: #fceff5;
+  --bg-panel: #f0dae4;
+  --border: #e0b5c8;
+  --border-strong: #c8879d;
+  --text: #4a2a3a;
+  --text-dim: #7a5a68;
+  --text-faint: #a88ca0;
+  --accent: #ff7fb3;
+  --accent-soft: rgba(255, 127, 179, 0.18);
+  --green: #6bbf85;
+  --orange: #e89a3c;
+  --red: #d15a5a;
+  --map-trace: #ff7fb3;
+  --map-trace-hot: #ff4d94;
+  --map-listen: #d8a8bc;
+  --map-count: #a0325c;
+  --map-signal: #ff4d94;
+  --map-node-fill: #fff5f8;
+  --map-node-stroke: #ff9ecb;
+  --map-node-stroke-hover: #ff4d94;
+  --map-node-stroke-dim: #d8a8bc;
+  --map-name: #4a2a3a;
+  --map-sub: #7a5a68;
+  --map-pin: #b06a86;
+  --map-hub-fill: #ffe8f0;
+  --map-hub-stroke: #a8c8ec;
+  --map-hub-label: #34446a;
+  --map-hub-pin: #7fa0d4;
+}
+
 body[data-theme="bubblegum"] {
   --bg: #1a0713;
   --bg-raised: #26101a;

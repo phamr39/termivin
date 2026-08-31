@@ -82,6 +82,32 @@ export const THEMES = {
       brightBlack: '#7a4a63',
     },
   },
+  sakura: {
+    label: 'Sakura',
+    desc: 'Soft baby-pink pastel over warm plum',
+    swatches: ['#251820', '#ffc9de', '#ffe0ec'],
+    xterm: {
+      background: '#251820',
+      foreground: '#ffe0ec',
+      cursor: '#ffc9de',
+      selectionBackground: '#5a3145',
+      black: '#332030',
+      brightBlack: '#8f6f7f',
+    },
+  },
+  cottoncandy: {
+    label: 'Cotton Candy',
+    desc: 'Powder pink & baby-blue pastel',
+    swatches: ['#f5e6ec', '#ff9ecb', '#a8c8ec'],
+    xterm: {
+      background: '#f5e6ec',
+      foreground: '#5a3a4a',
+      cursor: '#ff7fb3',
+      selectionBackground: '#ffcbe3',
+      black: '#6a4658',
+      brightBlack: '#8a6a78',
+    },
+  },
   nord: {
     label: 'Nord',
     desc: 'Arctic frost, muted Scandi blue',
