@@ -143,10 +143,13 @@ function drawMap(ws, stats) {
       icon: info.icon,
       color: info.color,
       status: TM.getStatus(t.id),
-      sub: role || (onBus ? 'on the bus' : t.external ? 'external window' : info.label + ' · quiet'),
+      sub: role || (onBus ? 'on the bus' : t.external ? 'external window' : 'off the bus'),
       badge: a && a.pending ? '✉ ' + a.pending : null,
       dim: !onBus,
-      title: `${t.name}\n${info.label}${role ? '\nrole: ' + role : ''}\nsent ${traffic.sent} · received ${traffic.recv}\nclick to open in canvas`,
+      // Distinguishes "in my workspace but not on the bus" from external chips
+      // (which are dim too but read differently — accent color + ⇄ icon).
+      offBus: !onBus && !t.external,
+      title: `${t.name}\n${info.label}${role ? '\nrole: ' + role : ''}\nsent ${traffic.sent} · received ${traffic.recv}\n${onBus ? '' : '(not on the bus — press 🔗 on the pane to connect)\n'}click to open in canvas`,
     };
   });
 
@@ -196,7 +199,12 @@ function drawMap(ws, stats) {
     }
   }
 
-  // topics of this workspace as central bus bars; registered agents listen
+  // topics of this workspace as central bus bars; the hub itself signals "every
+  // agent here hears it", so no dashed listen line per agent is drawn — a
+  // full-mesh of dashed lines converging on one hub turns the map into
+  // spaghetti even with only a handful of agents. The only per-topic wire we
+  // still draw is a single subtle "rep" line so the representative is visible
+  // without having to read the sub-text.
   const hubs = stats.topics
     .filter((t) => t.spaceId === ws.id)
     .map((t) => ({
@@ -206,14 +214,8 @@ function drawMap(ws, stats) {
       title: `#${t.name}\nEvery agent here hears it; outside workspaces reach ${t.effectiveRepName || '(nobody)'}.`,
     }));
   for (const t of stats.topics.filter((t) => t.spaceId === ws.id)) {
-    // every terminal in the workspace hears its topics — the representative
-    // gets the solid line, everyone else a dashed listen line
-    for (const a of stats.agents) {
-      if (a.space !== ws.id || !termIds.has(a.id)) continue;
-      links.push({
-        a: a.id, b: 'topic:' + t.id, count: 0,
-        kind: a.id === t.effectiveRepId ? 'traffic' : 'listen',
-      });
+    if (t.effectiveRepId && termIds.has(t.effectiveRepId)) {
+      links.push({ a: t.effectiveRepId, b: 'topic:' + t.id, count: 0, kind: 'rep' });
     }
   }
 

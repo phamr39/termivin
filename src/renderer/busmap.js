@@ -52,7 +52,7 @@ export class BusMap {
     // the DOM stays stable under the 1.5s refresh tick.
     const signature = JSON.stringify([
       w, h,
-      nodes.map((n) => [n.id, n.label, n.sub, n.status, n.badge, n.dim]),
+      nodes.map((n) => [n.id, n.label, n.sub, n.status, n.badge, n.dim, n.offBus]),
       hubs.map((t) => [t.id, t.label, t.sub]),
       links.map((l) => [l.a, l.b, l.count, l.kind]),
     ]);
@@ -90,19 +90,31 @@ export class BusMap {
     const isGlobal = this.opts.mode === 'global';
     const nodeW = isGlobal ? 188 : 156;
     const nodeH = isGlobal ? 84 : 56;
+    const hubW = isGlobal ? 150 : 168;
+    const hubH = 34;
 
     // --- layout: hubs in the middle, nodes on a ring ----------------------
     // Keep the ring compact: just big enough that chips don't collide, never
     // stretched to the container edges — a wide window otherwise flings the
-    // nodes apart until the map stops reading as one network.
+    // nodes apart until the map stops reading as one network. When a hub sits
+    // in the middle, force rx large enough that a chip at the horizontal
+    // midline can't overlap the bus bar; and use a start angle that keeps the
+    // 3 and 9 o'clock slots away from the hub whenever we can avoid them.
     const availRx = Math.max(120, w / 2 - nodeW / 2 - 28);
     const availRy = Math.max(90, h / 2 - nodeH / 2 - 30);
     const needed = (nodes.length * (nodeW + 44)) / (2 * Math.PI);
-    const rx = Math.min(availRx, Math.max(210, needed * 1.35));
+    const hubClearanceX = hubs.length ? hubW / 2 + nodeW / 2 + 20 : 0;
+    const rx = Math.min(availRx, Math.max(210, needed * 1.35, hubClearanceX));
     const ry = Math.min(availRy, Math.max(140, needed * 0.95));
     // Few nodes read better spread horizontally (two chips side by side, not
-    // stacked on the hub); rings only pay off from ~3 nodes up.
-    const startAngle = nodes.length <= 2 ? Math.PI : -Math.PI / 2;
+    // stacked on the hub); rings only pay off from ~3 nodes up. When a hub is
+    // present the ring skips 12 o'clock as the seed and rotates a half-slot,
+    // so nodes flank the hub instead of landing on top of it or right beside
+    // it at the horizontal midline where labels would collide with the bar.
+    let startAngle;
+    if (nodes.length <= 2) startAngle = Math.PI;
+    else if (hubs.length) startAngle = -Math.PI / 2 + Math.PI / Math.max(3, nodes.length);
+    else startAngle = -Math.PI / 2;
     nodes.forEach((n, i) => {
       const angle = (i / Math.max(1, nodes.length)) * Math.PI * 2 + startAngle;
       this.pos.set(n.id, {
@@ -110,8 +122,6 @@ export class BusMap {
         y: cy + (nodes.length === 1 ? 0 : Math.sin(angle) * ry * 0.86),
       });
     });
-    const hubW = isGlobal ? 150 : 168;
-    const hubH = 34;
     hubs.forEach((t, i) => {
       const n = hubs.length;
       const spread = Math.min(120, (h - 160) / Math.max(1, n));
@@ -129,19 +139,27 @@ export class BusMap {
       const dx = pb.x - pa.x;
       const dy = pb.y - pa.y;
       const len = Math.hypot(dx, dy) || 1;
-      const bend = l.kind === 'listen' ? 0 : Math.min(46, len * 0.16);
+      const bend = l.kind === 'traffic' ? Math.min(46, len * 0.16) : 0;
       const nx = (-dy / len) * bend;
       const ny = (dx / len) * bend;
       const d = `M ${pa.x} ${pa.y} Q ${mx + nx} ${my + ny} ${pb.x} ${pb.y}`;
-      const width = l.kind === 'listen' ? 1 : Math.min(5, 1.4 + Math.log2(1 + (l.count || 0)));
-      const cls = l.kind === 'listen'
-        ? 'bm-trace bm-listen'
-        : 'bm-trace' + ((l.count || 0) > 0 ? ' bm-active' : '');
+      let cls = 'bm-trace';
+      let width = 1;
+      if (l.kind === 'rep') {
+        cls += ' bm-rep';
+        width = 1.4;
+      } else if (l.kind === 'listen') {
+        cls += ' bm-listen';
+        width = 1;
+      } else {
+        width = Math.min(5, 1.4 + Math.log2(1 + (l.count || 0)));
+        if ((l.count || 0) > 0) cls += ' bm-active';
+      }
       const path = sel('path', { d, class: cls, 'stroke-width': width });
-      if (l.kind !== 'listen' && (l.count || 0) > 0) path.setAttribute('filter', 'url(#bm-glow)');
+      if (l.kind === 'traffic' && (l.count || 0) > 0) path.setAttribute('filter', 'url(#bm-glow)');
       gTraces.appendChild(path);
       this.paths.set(linkKey(l.a, l.b), { el: path, from: l.a, to: l.b });
-      if (l.count > 1) {
+      if (l.kind === 'traffic' && l.count > 1) {
         const label = sel('text', {
           x: mx + nx * 0.75, y: my + ny * 0.75 - 4, class: 'bm-trace-count', 'text-anchor': 'middle',
         });
@@ -181,8 +199,11 @@ export class BusMap {
     // --- nodes as chips ---------------------------------------------------
     for (const n of nodes) {
       const p = this.pos.get(n.id);
+      let cls = 'bm-node';
+      if (n.dim) cls += ' bm-dim';
+      if (n.offBus) cls += ' bm-off';
       const g = sel('g', {
-        class: 'bm-node' + (n.dim ? ' bm-dim' : ''),
+        class: cls,
         transform: `translate(${p.x - nodeW / 2}, ${p.y - nodeH / 2})`,
       });
       // IC pins along top and bottom edges — the chip-city signature
@@ -201,16 +222,26 @@ export class BusMap {
       // type icon
       const icon = sel('text', { x: 28, y: 20, class: 'bm-node-icon' });
       icon.textContent = n.icon || '';
-      if (n.color) icon.setAttribute('fill', n.color);
+      // Off-bus chips drop the accent color so the whole chip reads grey; the
+      // status LED still keeps its own color so working/approval remains loud.
+      if (n.color && !n.offBus) icon.setAttribute('fill', n.color);
       g.appendChild(icon);
-      // name
+      // Reserve the badge's slot when truncating the name, otherwise the
+      // badge lands on top of half the label ("GlobalMonito…" underneath "3").
+      const badgeTxt = n.badge ? String(n.badge) : '';
+      const badgeW = badgeTxt ? Math.max(18, 8 + badgeTxt.length * 7) : 0;
+      const nameAvail = nodeW - 44 - (badgeW ? badgeW + 12 : 8);
+      // ~7px per glyph in the mono face at 12px — err on the tighter side.
+      const nameMax = Math.max(4, Math.floor(nameAvail / 7));
+      const nameTxt = n.label.length > nameMax ? n.label.slice(0, nameMax - 1) + '…' : n.label;
       const name = sel('text', { x: 44, y: 20, class: 'bm-node-name' });
-      name.textContent = n.label.length > (isGlobal ? 18 : 13) ? n.label.slice(0, isGlobal ? 17 : 12) + '…' : n.label;
+      name.textContent = nameTxt;
       g.appendChild(name);
       // sub line (role / counts)
       if (n.sub) {
         const sub = sel('text', { x: 15, y: isGlobal ? 42 : 40, class: 'bm-node-sub' });
-        sub.textContent = n.sub.length > (isGlobal ? 30 : 20) ? n.sub.slice(0, isGlobal ? 29 : 19) + '…' : n.sub;
+        const subMax = Math.max(6, Math.floor((nodeW - 30) / 7));
+        sub.textContent = n.sub.length > subMax ? n.sub.slice(0, subMax - 1) + '…' : n.sub;
         g.appendChild(sub);
       }
       if (isGlobal && n.sub2) {
@@ -219,13 +250,11 @@ export class BusMap {
         g.appendChild(sub2);
       }
       // mail / count badge in the corner (width follows the text)
-      if (n.badge) {
-        const txt = String(n.badge);
-        const bw = Math.max(18, 8 + txt.length * 7);
-        const bg = sel('g', { transform: `translate(${nodeW - bw - 6}, 7)` });
-        bg.appendChild(sel('rect', { width: bw, height: 15, rx: 7.5, class: 'bm-badge' }));
-        const bt = sel('text', { x: bw / 2, y: 11, 'text-anchor': 'middle', class: 'bm-badge-text' });
-        bt.textContent = txt;
+      if (badgeTxt) {
+        const bg = sel('g', { transform: `translate(${nodeW - badgeW - 6}, 7)` });
+        bg.appendChild(sel('rect', { width: badgeW, height: 15, rx: 7.5, class: 'bm-badge' }));
+        const bt = sel('text', { x: badgeW / 2, y: 11, 'text-anchor': 'middle', class: 'bm-badge-text' });
+        bt.textContent = badgeTxt;
         bg.appendChild(bt);
         g.appendChild(bg);
       }
