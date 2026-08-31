@@ -108,6 +108,19 @@ export const THEMES = {
       brightBlack: '#8a6a78',
     },
   },
+  latte: {
+    label: 'Latte',
+    desc: 'Warm cream light — soft mauve accents',
+    swatches: ['#f5f0e8', '#8b6b8f', '#c2937f'],
+    xterm: {
+      background: '#f5f0e8',
+      foreground: '#4c4f5c',
+      cursor: '#8b6b8f',
+      selectionBackground: '#e8dccc',
+      black: '#5c5f6c',
+      brightBlack: '#8a8d99',
+    },
+  },
   nord: {
     label: 'Nord',
     desc: 'Arctic frost, muted Scandi blue',

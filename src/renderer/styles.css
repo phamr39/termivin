@@ -207,6 +207,41 @@ body[data-theme="cottoncandy"] {
   --map-hub-pin: #7fa0d4;
 }
 
+/* Latte — the second light theme: warm cream productivity look, softer than
+   Cotton Candy. Same light-mode rules (dark text, light halos, saturated
+   accent for buttons); accent is a muted mauve so it reads without shouting. */
+body[data-theme="latte"] {
+  --bg: #f5f0e8;
+  --bg-raised: #fdf9f0;
+  --bg-panel: #ede7db;
+  --border: #d8cfbe;
+  --border-strong: #b8a894;
+  --text: #4c4f5c;
+  --text-dim: #6f7382;
+  --text-faint: #9a9db0;
+  --accent: #8b6b8f;
+  --accent-soft: rgba(139, 107, 143, 0.16);
+  --green: #6b9b6b;
+  --orange: #c88a3c;
+  --red: #b85555;
+  --map-trace: #8b6b8f;
+  --map-trace-hot: #b590b8;
+  --map-listen: #c8bfa8;
+  --map-count: #5a3f5e;
+  --map-signal: #b590b8;
+  --map-node-fill: #fdf9f0;
+  --map-node-stroke: #b590b8;
+  --map-node-stroke-hover: #5a3f5e;
+  --map-node-stroke-dim: #d8cfbe;
+  --map-name: #4c4f5c;
+  --map-sub: #7a7d8c;
+  --map-pin: #a08aa3;
+  --map-hub-fill: #ede7db;
+  --map-hub-stroke: #c2937f;
+  --map-hub-label: #6a3f2f;
+  --map-hub-pin: #a67f6a;
+}
+
 body[data-theme="bubblegum"] {
   --bg: #1a0713;
   --bg-raised: #26101a;

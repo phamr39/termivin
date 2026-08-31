@@ -3,6 +3,24 @@
 All notable changes to Termivin are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-09-01
+
+The workspace dashboard learns to surface who is waiting on whom, the agent bus stops silently dropping mail after long sessions, and the app picks up nine new themes including its first two light modes.
+
+### Added
+
+- **"Awaiting reply" panel on the workspace dashboard.** Every ask (a message sent with `--ask`) is tracked server-side and appears in a new panel until any reply tagged with the matching `corr` comes through — with the sender, recipient, subject and how long it has been waiting. Agents that have unread bus mail sitting in their queue but no explicit ask show up in the same panel. Each row carries a 📬 **Push** button that types `termivin recv --wait 60` into the target agent's pane (unsubmitted, same idle-and-no-approval guard as the 🔗 connect button) so you can nudge a forgetful agent without leaving the dashboard. Outstanding asks survive an app restart — they are rebuilt from the message log on startup so the panel is never empty just because you closed the window.
+- **Nine new themes** — the ⚙ picker gains: **Bubblegum** (hot pink over deep magenta), **Sakura** (soft baby-pink pastel over warm plum), **Cotton Candy** (Termivin's first light theme — powder pink and baby-blue), **Latte** (the second light theme — warm cream with muted mauve accents, quieter than Cotton Candy), **Nord** (arctic frost, muted Scandi blue), **Dracula** (purple/pink/cyan cult classic), **Gruvbox** (warm retro brown and burnt orange), **Tokyo Night** (deep navy with neon violet accents), **Sunset** (coral over dusk violet), and **Rose Pine** (muted mauve and dusty rose). Each ships a full map palette and matching xterm colors; light themes flip halos and count text so labels stay readable against pale backgrounds.
+
+### Fixed
+
+- **The agent bus no longer loses messages after a long session.** The failure was tiny and easy to miss: `deliver()` wrote the "message read" record to the log *before* the HTTP response had actually flushed to the wire. Anything that could tear the connection down mid-write — Claude Code's 2-minute kill on a `bash` call, a socket the OS reclaimed while the poll was idle, an app quit during a hand-off — left the message marked delivered on disk while the agent never saw it, and every subsequent send behaved as if the earlier one had been read. `drain` splits into `peekQueue` + `confirmDelivered` + `returnUndelivered`, a `sendMessages()` helper only commits deliveries once `res.writableFinished` is true, and anything that fails to flush goes back on the queue for the next `recv`. The immediate `/recv` path and the long-poll path both use it.
+- **The workspace dashboard's communication map stops reading as spaghetti.**
+  - The map used to draw a dashed "listen" line from every agent to every topic — with 10 agents and one topic, 10 lines converged on the same hub before any real traffic was even drawn. Those lines are gone: topic membership is what the central hub itself signals. In their place there is one subtle solid line from the representative to its hub, so who speaks for a topic is visible without having to squint at the sub-text.
+  - "On the bus" and "not on the bus" chips now really look different. The old 0.6-opacity dim was invisible next to a live chip on a dark background; an off-bus chip now has a dashed neutral-grey outline, a body filled in the panel color, muted pins and greyed text — plus an *off the bus* caption and a tooltip line telling you to press 🔗 to connect.
+  - Chip name truncation reserves room for the mail badge, so "GlobalMonitor" is no longer rendered as "GlobalMonito…" underneath the "3" badge. Sub-line truncation follows the chip width too.
+  - The ring layout forces enough radius to clear the central bus bar when a topic is present, and rotates the seed angle a half-slot, so horizontal-midline chips no longer collide with the hub at 3 and 9 o'clock.
+
 ## [0.3.3] — 2026-08-18
 
 Two bugs where code written on Windows met a Mac: one silently ran shell commands, the other could not find an editor that was plainly installed.
