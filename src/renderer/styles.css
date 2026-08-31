@@ -9,6 +9,11 @@
   --text-faint: #5c6773;
   --accent: #4e9af5;
   --accent-soft: rgba(78, 154, 245, 0.15);
+  /* Emphasis text on a themed surface (active tab/workspace/segment) and text
+     on an accent-filled button. White works on every dark theme; the light
+     themes override both, or the label vanishes into the background. */
+  --text-strong: #ffffff;
+  --on-accent: #ffffff;
   --green: #3fb26f;
   --orange: #e8a13c;
   --red: #e05d5d;
@@ -186,9 +191,11 @@ body[data-theme="cottoncandy"] {
   --text-faint: #a88ca0;
   --accent: #ff7fb3;
   --accent-soft: rgba(255, 127, 179, 0.18);
-  --green: #6bbf85;
-  --orange: #e89a3c;
-  --red: #d15a5a;
+  --text-strong: #2e1a24;
+  --on-accent: #3a1224;
+  --green: #2b7d4c;
+  --orange: #b8701c;
+  --red: #c04242;
   --map-trace: #ff7fb3;
   --map-trace-hot: #ff4d94;
   --map-listen: #d8a8bc;
@@ -221,8 +228,10 @@ body[data-theme="latte"] {
   --text-faint: #9a9db0;
   --accent: #8b6b8f;
   --accent-soft: rgba(139, 107, 143, 0.16);
-  --green: #6b9b6b;
-  --orange: #c88a3c;
+  --text-strong: #2f313c;
+  --on-accent: #ffffff;
+  --green: #427042;
+  --orange: #a06a1c;
   --red: #b85555;
   --map-trace: #8b6b8f;
   --map-trace-hot: #b590b8;
@@ -477,7 +486,7 @@ body {
   white-space: nowrap;
 }
 .btn-sm { font-size: 12px; padding: 4px 10px; }
-.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { filter: brightness(1.12); }
 .btn-ghost { background: transparent; border-color: var(--border); color: var(--text-dim); }
 .btn-ghost:hover { background: var(--bg-raised); color: var(--text); }
@@ -565,7 +574,7 @@ body {
   color: var(--text-faint);
 }
 .settings-note { font-size: 11.5px; color: var(--text-dim); margin-top: -6px; }
-.theme-list { display: flex; flex-direction: column; gap: 7px; }
+.theme-list { display: flex; flex-direction: column; gap: 7px; min-height: 0; overflow-y: auto; }
 .theme-card {
   display: flex;
   align-items: center;
@@ -627,7 +636,7 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-item.active .ws-name { color: #fff; font-weight: 500; }
+.ws-item.active .ws-name { color: var(--text-strong); font-weight: 500; }
 
 .ws-badges { display: flex; gap: 4px; align-items: center; }
 .badge {
@@ -686,7 +695,7 @@ body {
   padding: 5px 14px;
   cursor: pointer;
 }
-.seg-btn.active { background: var(--bg-raised); color: #fff; }
+.seg-btn.active { background: var(--bg-raised); color: var(--text-strong); }
 
 /* ---------------------------------------------------------------- tabs */
 
@@ -716,7 +725,7 @@ body {
 }
 .tab:hover { background: var(--bg-raised); }
 .tab.active {
-  color: #fff;
+  color: var(--text-strong);
   background: var(--bg);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
@@ -1366,7 +1375,7 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
 }
 #home-item:hover { background: var(--bg-raised); }
 #home-item.active { background: var(--bg-raised); border-color: var(--border); }
-#home-item.active .ws-name { color: #fff; font-weight: 500; }
+#home-item.active .ws-name { color: var(--text-strong); font-weight: 500; }
 .home-item-icon { font-size: 14px; color: var(--accent); }
 
 #home {
@@ -1534,6 +1543,11 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
   flex-direction: column;
   gap: 13px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  /* A modal that outgrows the window puts its title above the top edge and
+     its buttons below the bottom one, with no way to scroll to either --
+     which is what 15 themes did to the settings modal. */
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 .modal-title { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
 

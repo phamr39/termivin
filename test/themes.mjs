@@ -39,7 +39,16 @@ await page.evaluate(() => {
 await page.click('#settings-btn');
 await page.waitForSelector('#settings-overlay:not(.hidden)');
 check('settings modal opens', true);
-check('picker lists 5 themes', (await page.locator('.theme-card').count()) === 5);
+// Count against the registry the renderer actually loaded, not a literal —
+// the picker gained nine themes in 0.4.0 and a hardcoded number goes stale
+// every time one is added.
+const registered = await page.evaluate(async () =>
+  Object.keys((await import('./themes.js')).THEMES));
+const listedIds = await page.evaluate(() =>
+  [...document.querySelectorAll('.theme-card')].map((c) => c.dataset.theme));
+check(`picker lists all ${registered.length} themes`,
+  registered.length === listedIds.length && registered.every((t) => listedIds.includes(t)),
+  { listed: listedIds, registered });
 check('current theme marked active', await page.evaluate(() =>
   document.querySelector('.theme-card.active')?.dataset.theme === 'termivin'));
 
