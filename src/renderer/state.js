@@ -169,6 +169,11 @@ export function addTerminal(wsId, meta) {
     savedTail: [],
     layout: defaultLayout(ws.terminals.length),
     external: meta.external || null, // { pid, hwnd, title } for attached OS windows
+    // Opt-in: when true, Termivin auto-types `termivin recv --wait 60\r` into
+    // the pane whenever mail arrives and the pane is safe to type into
+    // (running, idle for a few seconds, no approval prompt, not just nudged).
+    // Off by default because it presses Enter for you, which is a real gun.
+    autoListen: false,
     createdAt: Date.now(),
   };
   ws.terminals.push(term);
@@ -192,6 +197,17 @@ export function removeTerminal(termId) {
     }
   }
   return null;
+}
+
+// Opt-in flag: Termivin auto-types `termivin recv --wait 60\r` into the pane
+// when mail arrives and the pane is safe to type into. Persisted so a restart
+// keeps whatever the user last chose.
+export function setAutoListen(termId, on) {
+  const t = findTerminal(termId);
+  if (!t) return false;
+  t.meta.autoListen = !!on;
+  scheduleSave();
+  return true;
 }
 
 export function renameTerminal(termId, name) {

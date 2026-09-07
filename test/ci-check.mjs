@@ -37,6 +37,7 @@ const ESM = [
   'src/renderer/dashboard.js',
   'src/renderer/home.js',
   'src/renderer/themes.js',
+  'src/renderer/auto-listen.js',
 ];
 
 for (const f of CJS) {

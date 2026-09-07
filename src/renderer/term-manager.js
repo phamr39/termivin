@@ -378,6 +378,15 @@ export function getApproval(termId) {
   return rt ? rt.approval : null;
 }
 
+// How long the pane has been quiet — used by auto-listen to decide whether the
+// prompt is likely stable enough to press Enter into. Returns Infinity when the
+// pane isn't tracked (never spawned or already disposed).
+export function idleForMs(termId) {
+  const rt = runtimes.get(termId);
+  if (!rt || !rt.lastDataAt) return Infinity;
+  return Date.now() - rt.lastDataAt;
+}
+
 export function isRunning(termId) {
   const rt = runtimes.get(termId);
   return !!(rt && (rt.running || rt.attached));

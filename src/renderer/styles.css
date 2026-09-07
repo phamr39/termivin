@@ -1363,6 +1363,23 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
   border-radius: 5px;
 }
 
+/* Auto-listen indicator: a small 🎧 next to the pane's name (canvas view) and
+   next to the terminal's name (dashboard row) whenever the pane will accept
+   auto-typed recv commands. */
+.side-row-listen {
+  font-size: 11px;
+  color: var(--accent);
+  margin-right: 4px;
+  line-height: 1;
+}
+.pane-listen-mark {
+  font-size: 12px;
+  margin-left: 4px;
+  color: var(--accent);
+  line-height: 1;
+  vertical-align: middle;
+}
+
 /* "Awaiting reply" panel: outstanding asks + agents with unread mail.
    Row layout mirrors .side-row but adds two-line info + a Push button. */
 .side-title-count {

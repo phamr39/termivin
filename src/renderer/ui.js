@@ -8,6 +8,7 @@ import {
   PERMISSION_MODES, supportsPermissionMode, withPermissionMode, readPermissionMode,
 } from './presets.js';
 import { initDashData, onBusEvent } from './dash-data.js';
+import * as AutoListen from './auto-listen.js';
 import {
   initWorkspaceDashboard, renderWorkspaceDashboard, refreshWorkspaceDashboard, pulseWorkspaceMap,
 } from './dashboard.js';
@@ -180,6 +181,7 @@ export async function closeOrRemoveTerminal(termId) {
   if (!yes) return;
   TM.disposeTerminal(termId);
   S.removeTerminal(termId);
+  AutoListen.forgetTerminal(termId);
   renderAll();
 }
 
@@ -251,6 +253,28 @@ function connectPrompt(ws, self, peers) {
 // with one keystroke after glancing at what is queued. Same guardrail as
 // connectAgent: never inject while the pane is at an approval prompt, because
 // Enter would answer that prompt instead.
+// Opt-in switch: when on, the auto-listen module presses Enter for you
+// whenever mail arrives at a safe moment. Confirms turning it on (because it
+// really does press Enter) and re-renders so the 🎧 indicator updates.
+async function toggleAutoListen(termId, on) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  if (on) {
+    const ok = await uiConfirm(
+      `Turn on auto-listen for "${found.meta.name}"?\n\n` +
+      'Whenever mail arrives and the pane looks safe to type into ' +
+      '(idle for a few seconds, no approval prompt), Termivin will type ' +
+      '`termivin recv --wait 60` AND press Enter. Use it for agents that ' +
+      'reliably return to a clean prompt — a shell that leaves half-typed ' +
+      'input around will submit it too.',
+      { title: 'Enable auto-listen', okLabel: 'Turn it on' }
+    );
+    if (!ok) return;
+  }
+  AutoListen.setAutoListen(termId, on);
+  renderAll();
+}
+
 export async function nudgeAgent(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
@@ -393,6 +417,13 @@ function openPaneMenu(termId, anchor) {
           renderAll();
         }
       });
+    }
+    if (isAgentType(meta.type)) {
+      const on = AutoListen.isAutoListen(termId);
+      const label = on
+        ? '🎧  Auto-listen: ON — click to turn off'
+        : '🎧  Auto-listen for mail…';
+      add(label, () => toggleAutoListen(termId, !on));
     }
   }
   menu.appendChild(el('div', 'pane-menu-sep'));
@@ -1266,6 +1297,20 @@ export function updatePanes() {
     rt.pane.querySelector('.pane-bar .dot').className = 'dot st-' + st;
     const nameEl = rt.pane.querySelector('.pane-name');
     if (nameEl && nameEl.textContent !== t.name) nameEl.textContent = t.name;
+    // Auto-listen indicator on the pane bar — a small 🎧 that follows the
+    // name element. Purely visual; the toggle lives in the pane's ⋯ menu.
+    if (nameEl) {
+      let listenMark = nameEl.parentElement.querySelector('.pane-listen-mark');
+      if (t.autoListen) {
+        if (!listenMark) {
+          listenMark = el('span', 'pane-listen-mark', '🎧');
+          listenMark.title = 'Auto-listen for mail is on';
+          nameEl.parentElement.insertBefore(listenMark, nameEl.nextSibling);
+        }
+      } else if (listenMark) {
+        listenMark.remove();
+      }
+    }
 
     const overlay = rt.pane.querySelector('.pane-overlay');
     let want = null;
@@ -1983,6 +2028,10 @@ export function onTerminalStatusChanged(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
   syncBusRoster();
+  // Give auto-listen a chance to fire a nudge that was deferred while this
+  // terminal was busy — mail queued five minutes ago finally gets picked up
+  // when the agent turns idle.
+  AutoListen.handleStatusChange(termId);
   renderSidebarBadges();
   const ws = S.activeWorkspace();
   if (ws && found.ws.id === ws.id) {
@@ -2246,6 +2295,11 @@ export function setupChrome() {
       renderAll();
     },
     removeTerm: closeOrRemoveTerminal,
+    toggleAutoListen,
+    // Silent setter used by the bulk "auto-listen on N" button — the bulk
+    // dialog already asked the user once, so we skip the per-terminal confirm.
+    setAutoListen: (termId, on) => AutoListen.setAutoListen(termId, on),
+    isAutoListen: AutoListen.isAutoListen,
     renameTerm: async (termId) => {
       const found = S.findTerminal(termId);
       if (!found) return;
@@ -2262,7 +2316,18 @@ export function setupChrome() {
   onBusEvent((evt) => {
     pulseWorkspaceMap(evt);
     pulseHomeMap(evt);
+    AutoListen.handleBusEvent(evt);
   });
+  // Seed auto-listen's "wants nudge" set from the server's pending counts on
+  // boot — the server's log replay populates the pending queues silently, so
+  // without this, mail queued while the app was closed sits there until the
+  // next new arrival wakes the nudge machinery.
+  setTimeout(async () => {
+    try {
+      const stats = await window.termivin.busStats();
+      AutoListen.seedFromStats(stats.agents);
+    } catch {}
+  }, 800);
 
   $('#home-item').addEventListener('click', () => {
     S.getState().appView = 'home';

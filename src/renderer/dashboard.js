@@ -382,7 +382,13 @@ function drawTermRows(ws, proc, tok, stats) {
     const name = el('span', 'side-row-name', t.name);
     const metrics = el('span', 'side-row-metrics',
       s ? `${fmtPct(s.cpu)} · ${fmtMem(s.mem)}` : '—');
-    row.append(dot, icon, name, metrics);
+    row.append(dot, icon, name);
+    if (t.autoListen && isAgentType(t.type) && !t.external) {
+      const listenMark = el('span', 'side-row-listen', '🎧');
+      listenMark.title = 'Auto-listen for mail is on';
+      row.append(listenMark);
+    }
+    row.append(metrics);
 
     if (st === 'approval') {
       // quick approve/deny without leaving the map
@@ -459,6 +465,11 @@ function openAgentRowMenu(termId, anchor, ctx) {
       add('📬   Push recv into pane', () => hooks.nudgeAgent(termId));
     }
     if (!ctx.onBus) add('🔗   Connect to bus', () => hooks.connectAgent(termId));
+    const listening = hooks.isAutoListen(termId);
+    add(listening
+      ? '🎧   Auto-listen: ON — click to turn off'
+      : '🎧   Auto-listen for mail…',
+      () => hooks.toggleAutoListen(termId, !listening));
   }
   menu.appendChild(el('div', 'pane-menu-sep'));
   if (!meta.external) {
@@ -555,6 +566,19 @@ function drawBulkActions(ws, stats) {
           { title: 'Connect all off-bus', okLabel: 'Connect all' });
         if (!ok) return;
         for (const t of offBusAgents) await hooks.connectAgent(t.id);
+      }));
+  }
+  const listenCandidates = ws.terminals.filter(
+    (t) => isAgent(t) && TM.isRunning(t.id) && !t.autoListen);
+  if (listenCandidates.length) {
+    box.appendChild(btn(`🎧 Auto-listen on ${listenCandidates.length}`, 'btn-ghost',
+      async () => {
+        const ok = await hooks.uiConfirm(
+          `Turn on auto-listen for ${listenCandidates.length} agent(s)? Whenever mail arrives and the pane is safely idle, Termivin will type \`termivin recv --wait 60\` AND press Enter for each. Use this only when you're sure the agents come back to a clean prompt.`,
+          { title: 'Enable auto-listen everywhere', okLabel: 'Turn it on' });
+        if (!ok) return;
+        for (const t of listenCandidates) hooks.setAutoListen(t.id, true);
+        hooks.renderAll();
       }));
   }
 }
