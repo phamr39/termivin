@@ -15,8 +15,19 @@ import {
 } from './dash-data.js';
 
 let map = null;
-let hooks = null; // { openInCanvas(termId), switchWorkspace(wsId), uiPrompt, uiConfirm }
+let hooks = null; // { openInCanvas(termId), switchWorkspace(wsId), uiPrompt, uiConfirm, ... }
 let refreshing = false;
+
+// Filter state for the Terminals card — kept in module scope so it survives
+// the 1.5s live tick (which never rebuilds the header, only redraws rows).
+// Reset when the user leaves the dashboard.
+let filterQuery = '';
+let filterStatus = 'all';
+
+// Only one row menu open at a time; stored so a second ⋯ click can toggle it
+// and outside clicks can close it.
+let rowMenuTermId = null;
+let rowMenuOutside = null;
 
 export function initWorkspaceDashboard(uiHooks) {
   hooks = uiHooks;
@@ -50,9 +61,28 @@ export function renderWorkspaceDashboard() {
       </div>
       <aside class="wsdash-side">
         <section class="side-card">
-          <div class="side-title">Terminals</div>
+          <div class="side-title">Terminals
+            <span class="side-title-count" id="wsdash-terms-shown"></span>
+          </div>
           <div class="side-tiles" id="wsdash-tiles"></div>
+          <div class="wsdash-filter">
+            <input type="search" id="wsdash-search" class="side-search"
+              placeholder="Filter by name or role…" spellcheck="false" />
+            <div class="side-chips" id="wsdash-chips">
+              <button class="side-chip active" data-f="all">All</button>
+              <button class="side-chip" data-f="working">Working</button>
+              <button class="side-chip" data-f="idle">Idle</button>
+              <button class="side-chip" data-f="approval">Approval</button>
+              <button class="side-chip" data-f="off-bus">Off bus</button>
+              <button class="side-chip" data-f="exited">Exited</button>
+              <button class="side-chip" data-f="saved">Saved</button>
+            </div>
+          </div>
           <div class="side-rows" id="wsdash-terms"></div>
+          <div class="side-empty hidden" id="wsdash-terms-empty">
+            No terminals match this filter.
+          </div>
+          <div class="side-bulk" id="wsdash-bulk"></div>
         </section>
         <section class="side-card">
           <div class="side-title">Awaiting reply
@@ -88,6 +118,26 @@ export function renderWorkspaceDashboard() {
     },
   });
 
+  // Wire the Terminals card's search + status chips once. Row rebuilds run on
+  // the 1.5s live tick without touching the header, so handlers here survive.
+  const search = document.getElementById('wsdash-search');
+  search.value = filterQuery;
+  search.addEventListener('input', () => {
+    filterQuery = search.value.trim().toLowerCase();
+    refreshWorkspaceDashboard(true);
+  });
+  const chipRow = document.getElementById('wsdash-chips');
+  for (const chip of chipRow.querySelectorAll('.side-chip')) {
+    chip.classList.toggle('active', chip.dataset.f === filterStatus);
+    chip.addEventListener('click', () => {
+      filterStatus = chip.dataset.f;
+      for (const c of chipRow.querySelectorAll('.side-chip')) {
+        c.classList.toggle('active', c.dataset.f === filterStatus);
+      }
+      refreshWorkspaceDashboard(true);
+    });
+  }
+
   document.getElementById('wsdash-newtopic').addEventListener('click', async () => {
     const name = await hooks.uiPrompt(
       'Topic name (agents everywhere can reach it as #name):',
@@ -112,7 +162,8 @@ export async function refreshWorkspaceDashboard(force = false) {
     const [stats, proc, tok] = await Promise.all([getBusStats(), getProcStats(), getTokens()]);
     drawMap(ws, stats);
     drawTiles(ws, proc);
-    drawTermRows(ws, proc, tok);
+    drawTermRows(ws, proc, tok, stats);
+    drawBulkActions(ws, stats);
     drawAwaitingReply(ws, stats);
     drawTopics(ws, stats);
     drawTokens(ws, tok);
@@ -270,13 +321,60 @@ function drawTiles(ws, proc) {
   tile('RAM', fmtMem(mem), '');
 }
 
-function drawTermRows(ws, proc, tok) {
+// Does a terminal pass the current search + status filter? Kept separate so
+// bulk actions can reuse it — "Stop all idle" respects the filter chip.
+function matchesFilter(t, agentInfoMap) {
+  const st = TM.getStatus(t.id);
+  const a = agentInfoMap.get(t.id) || null;
+  const traffic = a ? a.traffic : { sent: 0, recv: 0 };
+  const onBus = !!(a && (a.registered || a.pending || traffic.sent + traffic.recv > 0));
+  if (filterStatus !== 'all') {
+    if (filterStatus === 'off-bus') {
+      if (t.external || onBus || !isAgentType(t.type)) return false;
+    } else if (filterStatus !== st) {
+      return false;
+    }
+  }
+  if (filterQuery) {
+    const hay = (t.name + ' ' + (a && a.role ? a.role : '')).toLowerCase();
+    if (!hay.includes(filterQuery)) return false;
+  }
+  return true;
+}
+
+function drawTermRows(ws, proc, tok, stats) {
   const box = document.getElementById('wsdash-terms');
+  const empty = document.getElementById('wsdash-terms-empty');
+  const countEl = document.getElementById('wsdash-terms-shown');
   box.innerHTML = '';
-  for (const t of ws.terminals) {
+  const agentInfoMap = new Map((stats.agents || []).map((a) => [a.id, a]));
+  const filtered = ws.terminals.filter((t) => matchesFilter(t, agentInfoMap));
+
+  if (countEl) {
+    // "3 of 12" when a filter is on; just the total when nothing is filtered.
+    const showing = filtered.length;
+    const total = ws.terminals.length;
+    countEl.textContent = (filterQuery || filterStatus !== 'all') && showing !== total
+      ? `${showing} of ${total}` : total ? String(total) : '';
+  }
+
+  if (!filtered.length) {
+    empty.classList.remove('hidden');
+    empty.textContent = ws.terminals.length
+      ? 'No terminals match this filter.'
+      : 'No terminals yet — create one to see it here.';
+    return;
+  }
+  empty.classList.add('hidden');
+
+  for (const t of filtered) {
     const info = typeInfo(t.external ? 'external' : t.type);
     const st = TM.getStatus(t.id);
     const s = proc.byKey[t.id];
+    const a = agentInfoMap.get(t.id);
+    const traffic = a ? a.traffic : { sent: 0, recv: 0 };
+    const onBus = !!(a && (a.registered || a.pending || traffic.sent + traffic.recv > 0));
+
     const row = el('div', 'side-row');
     const dot = el('span', 'dot st-' + st);
     const icon = el('span', 'side-row-icon', info.icon);
@@ -285,6 +383,7 @@ function drawTermRows(ws, proc, tok) {
     const metrics = el('span', 'side-row-metrics',
       s ? `${fmtPct(s.cpu)} · ${fmtMem(s.mem)}` : '—');
     row.append(dot, icon, name, metrics);
+
     if (st === 'approval') {
       // quick approve/deny without leaving the map
       const yes = el('button', 'btn btn-approve btn-sm side-approve', '✓');
@@ -304,9 +403,159 @@ function drawTermRows(ws, proc, tok) {
       row.append(yes, no);
       row.classList.add('side-row-approval');
     }
-    row.title = `${t.name} — click to open in canvas`;
+
+    // Per-row ⋯ button — opens a menu with all the pane-level actions so the
+    // dashboard is enough to manage many agents without opening each pane.
+    const more = el('button', 'side-row-more', '⋯');
+    more.title = 'Actions';
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAgentRowMenu(t.id, more, { onBus, isRunning: TM.isRunning(t.id), meta: t, agent: a });
+    });
+    row.append(more);
+
+    const tips = [
+      t.name,
+      info.label + (a && a.role ? ' · ' + a.role : ''),
+      onBus
+        ? `sent ${traffic.sent} · received ${traffic.recv}` + (a && a.pending ? ` · ${a.pending} unread` : '')
+        : (isAgentType(t.type) && !t.external ? 'not on the bus' : ''),
+      'click to open in canvas',
+    ].filter(Boolean);
+    row.title = tips.join('\n');
     row.addEventListener('click', () => hooks.openInCanvas(t.id));
     box.appendChild(row);
+  }
+}
+
+// Small action menu anchored under the ⋯ button on a terminal row. Same
+// closing dance as the pane's ⋯ menu — a second click on the same anchor
+// toggles, any outside click dismisses.
+function openAgentRowMenu(termId, anchor, ctx) {
+  const reopening = rowMenuTermId === termId;
+  closeRowMenu();
+  if (reopening) return;
+
+  // Distinct class from ui.js's .pane-menu so closeRowMenu() below never rips
+  // an open pane menu off the DOM as a side effect. Styling piggybacks on
+  // .pane-menu via a shared selector in styles.css.
+  const menu = el('div', 'pane-menu dash-row-menu');
+  const add = (label, fn, danger = false) => {
+    const item = el('button', 'pane-menu-item' + (danger ? ' pane-menu-danger' : ''), label);
+    item.addEventListener('click', () => {
+      closeRowMenu();
+      fn();
+    });
+    menu.appendChild(item);
+  };
+
+  const meta = ctx.meta;
+  add('👁   Open in canvas', () => hooks.openInCanvas(termId));
+  add('✎   Rename…', () => hooks.renameTerm(termId));
+  if (!meta.external && isAgentType(meta.type)) {
+    if (ctx.agent && ctx.agent.pending) {
+      add(`📬   Push (${ctx.agent.pending} unread)`, () => hooks.nudgeAgent(termId));
+    } else {
+      add('📬   Push recv into pane', () => hooks.nudgeAgent(termId));
+    }
+    if (!ctx.onBus) add('🔗   Connect to bus', () => hooks.connectAgent(termId));
+  }
+  menu.appendChild(el('div', 'pane-menu-sep'));
+  if (!meta.external) {
+    if (ctx.isRunning) {
+      add('■   Stop process', () => hooks.stopTerm(termId));
+    } else {
+      add('↻   Restart', () => hooks.restartTerm(termId));
+    }
+  }
+  const cwd = meta.cwd;
+  if (cwd) add('📁   Open folder', () => hooks.revealFolder(cwd));
+  menu.appendChild(el('div', 'pane-menu-sep'));
+  add('✕   Remove terminal', () => hooks.removeTerm(termId), true);
+
+  document.body.appendChild(menu);
+  rowMenuTermId = termId;
+
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  menu.style.left = Math.max(6, Math.min(r.right - w, window.innerWidth - w - 6)) + 'px';
+  menu.style.top = Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 6) + 'px';
+
+  rowMenuOutside = (e) => {
+    if (menu.contains(e.target) || e.target === anchor) return;
+    closeRowMenu();
+  };
+  window.addEventListener('mousedown', rowMenuOutside, true);
+}
+
+function closeRowMenu() {
+  document.querySelectorAll('.dash-row-menu').forEach((m) => m.remove());
+  rowMenuTermId = null;
+  if (rowMenuOutside) {
+    window.removeEventListener('mousedown', rowMenuOutside, true);
+    rowMenuOutside = null;
+  }
+}
+
+// Common one-click ops surfaced at the bottom of the Terminals card. Only
+// buttons whose target set is non-empty are drawn — a "Restore 0 saved" would
+// just be noise. Every bulk button is gated on a uiConfirm so a stray click
+// on an eleven-agent workspace never nukes work by accident.
+function drawBulkActions(ws, stats) {
+  const box = document.getElementById('wsdash-bulk');
+  if (!box) return;
+  box.innerHTML = '';
+  const agentInfoMap = new Map((stats.agents || []).map((a) => [a.id, a]));
+  const isAgent = (t) => !t.external && isAgentType(t.type);
+
+  const savedAgents = ws.terminals.filter((t) => isAgent(t) && !TM.isRunning(t.id));
+  const mailAgents = ws.terminals.filter((t) => {
+    const a = agentInfoMap.get(t.id);
+    return isAgent(t) && TM.isRunning(t.id) && a && a.pending > 0;
+  });
+  const offBusAgents = ws.terminals.filter((t) => {
+    const a = agentInfoMap.get(t.id);
+    const traffic = a ? a.traffic : { sent: 0, recv: 0 };
+    const onBus = !!(a && (a.registered || a.pending || traffic.sent + traffic.recv > 0));
+    return isAgent(t) && TM.isRunning(t.id) && !onBus;
+  });
+
+  const btn = (label, cls, onClick) => {
+    const b = el('button', 'btn btn-sm side-bulk-btn ' + cls, label);
+    b.addEventListener('click', onClick);
+    return b;
+  };
+
+  if (savedAgents.length) {
+    box.appendChild(btn(`⚡ Restore ${savedAgents.length} saved`, 'btn-primary',
+      async () => {
+        const ok = await hooks.uiConfirm(
+          `Restore ${savedAgents.length} saved terminal(s) with their restore command?`,
+          { title: 'Restore all saved', okLabel: 'Restore' });
+        if (!ok) return;
+        for (const t of savedAgents) await TM.spawnTerminal(t, { useRestore: true });
+        hooks.renderAll();
+      }));
+  }
+  if (mailAgents.length) {
+    box.appendChild(btn(`📬 Push ${mailAgents.length} with mail`, 'btn-primary',
+      async () => {
+        const ok = await hooks.uiConfirm(
+          `Type "termivin recv --wait 60" into ${mailAgents.length} agent pane(s)? The command is typed but not submitted — press Enter yourself in each pane.`,
+          { title: 'Push all with unread mail', okLabel: 'Push all' });
+        if (!ok) return;
+        for (const t of mailAgents) await hooks.nudgeAgent(t.id);
+      }));
+  }
+  if (offBusAgents.length) {
+    box.appendChild(btn(`🔗 Connect ${offBusAgents.length} off-bus`, 'btn-ghost',
+      async () => {
+        const ok = await hooks.uiConfirm(
+          `Type the bus connect prompt into ${offBusAgents.length} agent pane(s) that aren't registered yet? The prompt is typed but not submitted.`,
+          { title: 'Connect all off-bus', okLabel: 'Connect all' });
+        if (!ok) return;
+        for (const t of offBusAgents) await hooks.connectAgent(t.id);
+      }));
   }
 }
 

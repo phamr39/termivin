@@ -1299,6 +1299,70 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
 }
 .side-empty { font-size: 12px; color: var(--text-faint); padding: 2px 0; }
 
+/* Terminals card management strip: search input + status filter chips + per-row
+   ⋯ action button + bulk action bar at the bottom. Kept compact because the
+   panel is narrow and lives alongside the map on the right. */
+.wsdash-filter { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 4px; }
+.side-search {
+  width: 100%;
+  padding: 5px 9px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+.side-search::placeholder { color: var(--text-faint); }
+.side-search:focus { border-color: var(--accent); }
+.side-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.side-chip {
+  padding: 3px 8px;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.side-chip:hover { color: var(--text); border-color: var(--border-strong); }
+.side-chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.side-row-more {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.side-row:hover .side-row-more,
+.side-row-more:focus { opacity: 1; }
+.side-row-more:hover { background: var(--bg-raised); color: var(--text); }
+
+.side-bulk { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.side-bulk:empty { margin-top: 0; }
+.side-bulk-btn {
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 5px;
+}
+
 /* "Awaiting reply" panel: outstanding asks + agents with unread mail.
    Row layout mirrors .side-row but adds two-line info + a Push button. */
 .side-title-count {
@@ -1676,6 +1740,8 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
   white-space: nowrap;
 }
 .pane-menu-item:hover { background: var(--accent-soft); color: var(--text); }
+.pane-menu-item.pane-menu-danger { color: var(--red); }
+.pane-menu-item.pane-menu-danger:hover { background: rgba(224, 93, 93, 0.16); color: var(--red); }
 .pane-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
 
 /* drop-to-attach toast */

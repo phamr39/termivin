@@ -156,7 +156,7 @@ export const uiConfirm = (message, opts = {}) => showDialog(message, opts);
 export const uiAlert = (message, opts = {}) => showDialog(message, { ...opts, alertOnly: true });
 export const uiPrompt = (message, opts = {}) => showDialog(message, { ...opts, prompt: true });
 
-async function closeOrRemoveTerminal(termId) {
+export async function closeOrRemoveTerminal(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
   const t = found.meta;
@@ -278,7 +278,7 @@ export async function nudgeAgent(termId) {
   openInCanvas(termId);
 }
 
-async function connectAgent(termId) {
+export async function connectAgent(termId) {
   const found = S.findTerminal(termId);
   if (!found) return;
   const { ws, meta } = found;
@@ -353,7 +353,7 @@ function startPaneRename(termId) {
   });
 }
 
-async function revealFolder(dir) {
+export async function revealFolder(dir) {
   const res = await window.termivin.openFolder(dir);
   if (!res.ok) await uiAlert(res.error, { title: 'Could not open folder' });
 }
@@ -2217,6 +2217,45 @@ export function setupChrome() {
     uiConfirm,
     uiAlert,
     nudgeAgent,
+    connectAgent,
+    revealFolder,
+    // Wrapped action helpers so the dashboard can act on a terminal without
+    // needing to reach into TM/state itself — same behaviour as the pane menu.
+    stopTerm: async (termId) => {
+      const found = S.findTerminal(termId);
+      if (!found) return;
+      if (!TM.isRunning(termId)) return;
+      const ok = await uiConfirm(
+        `Stop the process in "${found.meta.name}"? The terminal stays in the workspace.`,
+        { title: 'Stop process', okLabel: 'Stop', danger: true });
+      if (!ok) return;
+      TM.stopTerminal(termId);
+      renderAll();
+    },
+    restartTerm: async (termId) => {
+      const found = S.findTerminal(termId);
+      if (!found || found.meta.external) return;
+      if (TM.isRunning(termId)) {
+        const ok = await uiConfirm(
+          `"${found.meta.name}" is still running. Stop it first, then restart?`,
+          { title: 'Restart terminal', okLabel: 'Restart', danger: true });
+        if (!ok) return;
+        TM.stopTerminal(termId);
+      }
+      await TM.spawnTerminal(found.meta, { useRestore: true });
+      renderAll();
+    },
+    removeTerm: closeOrRemoveTerminal,
+    renameTerm: async (termId) => {
+      const found = S.findTerminal(termId);
+      if (!found) return;
+      const name = await uiPrompt('New name:', {
+        title: 'Rename terminal', okLabel: 'Rename', initial: found.meta.name,
+      });
+      if (!name) return;
+      S.renameTerminal(termId, name);
+      renderAll();
+    },
   };
   initWorkspaceDashboard(uiHooks);
   initHome(uiHooks);
