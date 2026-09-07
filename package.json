@@ -32,6 +32,7 @@
     "test:e2e": "node test/smoke.mjs",
     "test:bus": "node test/bus.mjs",
     "test:topics": "node test/topics.mjs",
+    "test:auto-listen": "node test/auto-listen.mjs",
     "test:dashboards": "node test/dashboards.mjs 9223",
     "test:dock-groups": "node test/dock-groups.mjs 9223",
     "test:paste": "node test/paste.mjs 9223",

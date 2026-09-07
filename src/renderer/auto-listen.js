@@ -24,6 +24,37 @@ import * as S from './state.js';
 import * as TM from './term-manager.js';
 import { isAgentType } from './presets.js';
 
+// All dependencies routed through a single object so a Node test can swap them
+// out — TM.getStatus and friends read from the renderer's xterm runtimes,
+// which don't exist under `node test/…`, so a straight import in a test file
+// can't exercise the guard logic without a real Electron process.
+const deps = {
+  findTerminal: (id) => S.findTerminal(id),
+  setAutoListen: (id, on) => S.setAutoListen(id, on),
+  getStatus: (id) => TM.getStatus(id),
+  isRunning: (id) => TM.isRunning(id),
+  idleForMs: (id) => TM.idleForMs(id),
+  sendKeys: (id, data) => TM.sendKeys(id, data),
+  isAgentType: (type) => isAgentType(type),
+  now: () => Date.now(),
+  scheduleTimer: (fn, ms) => setTimeout(fn, ms),
+  clearScheduledTimer: (t) => clearTimeout(t),
+};
+
+// Public: swap any of the above for tests. Production callers never touch this.
+export function __setDepsForTests(overrides) {
+  Object.assign(deps, overrides);
+}
+
+// Public: reset internal state — used between test cases so cooldowns and
+// pending-nudge sets from a previous scenario don't leak into the next one.
+export function __resetForTests() {
+  for (const timer of pending.values()) deps.clearScheduledTimer(timer);
+  pending.clear();
+  lastNudgeAt.clear();
+  wantsNudge.clear();
+}
+
 const IDLE_MIN_MS = 8000;
 const NUDGE_COOLDOWN_MS = 30000;
 const COALESCE_MS = 400;
@@ -76,7 +107,7 @@ export function seedFromStats(agents) {
 
 function scheduleNudge(termId) {
   if (pending.has(termId)) return; // a nudge is already queued for this pane
-  const timer = setTimeout(() => {
+  const timer = deps.scheduleTimer(() => {
     pending.delete(termId);
     maybeNudge(termId);
   }, COALESCE_MS);
@@ -84,30 +115,30 @@ function scheduleNudge(termId) {
 }
 
 function maybeNudge(termId) {
-  const found = S.findTerminal(termId);
+  const found = deps.findTerminal(termId);
   if (!found) return;
   const { meta } = found;
   if (!meta.autoListen) return;
   if (meta.external) return;
-  if (!isAgentType(meta.type)) return;
-  if (!TM.isRunning(termId)) return;
-  const status = TM.getStatus(termId);
+  if (!deps.isAgentType(meta.type)) return;
+  if (!deps.isRunning(termId)) return;
+  const status = deps.getStatus(termId);
   if (status !== 'idle') return; // working / approval / exited / saved all bail
-  if (TM.idleForMs(termId) < IDLE_MIN_MS) return;
+  if (deps.idleForMs(termId) < IDLE_MIN_MS) return;
   const last = lastNudgeAt.get(termId) || 0;
-  if (Date.now() - last < NUDGE_COOLDOWN_MS) return;
+  if (deps.now() - last < NUDGE_COOLDOWN_MS) return;
 
-  lastNudgeAt.set(termId, Date.now());
+  lastNudgeAt.set(termId, deps.now());
   // With Enter this time — auto-listen is the whole feature, and the guards
   // above are what earn the right to press it. The manual Push button in the
   // dashboard row menu still types without Enter for the more conservative
   // case where the user is in the loop.
-  TM.sendKeys(termId, 'termivin recv --wait 60\r');
+  deps.sendKeys(termId, 'termivin recv --wait 60\r');
 }
 
 // Public: manual toggle. Called by pane menu + dashboard row menu.
 export function setAutoListen(termId, on) {
-  const ok = S.setAutoListen(termId, on);
+  const ok = deps.setAutoListen(termId, on);
   if (!ok) return false;
   // Clear the cooldown so turning on auto-listen makes the *next* mail act
   // right away, even if the user manually pushed 15 seconds ago.
@@ -116,7 +147,7 @@ export function setAutoListen(termId, on) {
 }
 
 export function isAutoListen(termId) {
-  const found = S.findTerminal(termId);
+  const found = deps.findTerminal(termId);
   return !!(found && found.meta.autoListen);
 }
 
@@ -126,7 +157,7 @@ export function isAutoListen(termId) {
 export function forgetTerminal(termId) {
   const timer = pending.get(termId);
   if (timer) {
-    clearTimeout(timer);
+    deps.clearScheduledTimer(timer);
     pending.delete(termId);
   }
   lastNudgeAt.delete(termId);
