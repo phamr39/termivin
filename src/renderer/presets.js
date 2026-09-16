@@ -10,8 +10,8 @@ export function defaultShell() {
 export const TYPES = {
   claude: {
     label: 'Claude Code',
-    command: 'claude',
-    restoreCommand: 'claude --continue',
+    command: 'claude --model opus',
+    restoreCommand: 'claude --model opus --continue',
     color: '#d97757',
     icon: '✳',
   },

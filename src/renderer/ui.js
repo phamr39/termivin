@@ -1905,8 +1905,8 @@ async function doConvert() {
   meta.type = kind === 'claude' ? 'claude' : 'shell';
   meta.shell = null;
   meta.cwd = cwd;
-  meta.command = kind === 'claude' ? 'claude --continue' : '';
-  meta.restoreCommand = kind === 'claude' ? 'claude --continue' : '';
+  meta.command = kind === 'claude' ? 'claude --model opus --continue' : '';
+  meta.restoreCommand = kind === 'claude' ? 'claude --model opus --continue' : '';
   meta.external = null;
   meta.autoRestore = true;
   S.scheduleSave();
