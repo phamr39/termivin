@@ -94,14 +94,21 @@ function renderAgent(a) {
   return '  ' + bits.join(' ');
 }
 
+// Messages are sanitized by the bus, but older log entries predate that.
+function clean(text) {
+  return String(text || '').replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '');
+}
+
 function renderMessage(m) {
   const when = new Date(m.ts).toLocaleTimeString();
   const tag = m.kind === 'ask' ? ' [needs a reply]' : m.broadcast ? ' [broadcast]' : '';
-  const head = `[${when}] from ${m.fromName}${tag}` + (m.subject ? ` — ${m.subject}` : '');
+  const head = `[${when}] from ${clean(m.fromName)}${tag}` + (m.subject ? ` — ${clean(m.subject)}` : '');
+  // Replies carry the remaining hop budget on, so agent chains die out.
+  const ttl = Number.isFinite(m.ttl) ? ` --ttl ${m.ttl}` : '';
   const foot = m.kind === 'ask'
-    ? `\n  ↳ reply with: termivin send ${m.fromName} "..." --corr ${m.corr || m.id}`
+    ? `\n  ↳ reply with: termivin send ${clean(m.fromName)} "..." --corr ${m.corr || m.id}${ttl}`
     : '';
-  return `${head}\n${m.body.split('\n').map((l) => '  ' + l).join('\n')}${foot}`;
+  return `${head}\n${clean(m.body).split('\n').map((l) => '  ' + l).join('\n')}${foot}`;
 }
 
 // --- subcommands ----------------------------------------------------------
@@ -137,10 +144,15 @@ async function who() {
   return 0;
 }
 
+const BOOLEAN_FLAGS = new Set(['--ask']);
+
 async function send(argv) {
   const positional = [];
   for (let i = 1; i < argv.length; i++) {
-    if (argv[i].startsWith('--')) { i++; continue; }
+    if (argv[i].startsWith('--')) {
+      if (!BOOLEAN_FLAGS.has(argv[i])) i++; // skip the flag's value
+      continue;
+    }
     positional.push(argv[i]);
   }
   const [to, ...rest] = positional;
@@ -155,6 +167,7 @@ async function send(argv) {
     kind: argv.includes('--ask') ? 'ask' : flag(argv, 'kind', 'note'),
     subject: flag(argv, 'subject', ''),
     corr: flag(argv, 'corr', null),
+    ttl: flag(argv, 'ttl', undefined),
   });
   console.log(`Sent to: ${res.delivered.join(', ')}` + (res.topic ? ` (topic #${res.topic})` : ''));
   if (argv.includes('--ask')) {

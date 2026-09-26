@@ -109,10 +109,24 @@ function topicsFile() {
   return path.join(dataDir, 'topics.json');
 }
 
+// Temp file + rename: a crash mid-write must not leave a truncated file that
+// the loader then silently treats as empty (and the next save persists).
+function writeJsonAtomic(file, value) {
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
+  fs.renameSync(tmp, file);
+}
+
+// Message text ends up printed in agents' terminals — drop control characters
+// (ANSI/OSC escapes could retitle windows, write the clipboard, fake prompts).
+function stripControl(text) {
+  return String(text).replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '');
+}
+
 function saveTopics() {
   try {
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(topicsFile(), JSON.stringify([...topics.values()], null, 2), 'utf8');
+    writeJsonAtomic(topicsFile(), [...topics.values()]);
   } catch (err) {
     console.error('[bus] topics save failed:', err.message);
   }
@@ -279,7 +293,7 @@ function profilesFile() {
 function saveProfiles() {
   try {
     fs.mkdirSync(dataDir, { recursive: true });
-    fs.writeFileSync(profilesFile(), JSON.stringify(Object.fromEntries(profiles), null, 2), 'utf8');
+    writeJsonAtomic(profilesFile(), Object.fromEntries(profiles));
   } catch (err) {
     console.error('[bus] profiles save failed:', err.message);
   }
@@ -470,8 +484,9 @@ async function handle(req, res) {
 
   const auth = req.headers.authorization || '';
   const supplied = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  const ok = supplied.length === token.length &&
-    crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(token);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
   if (!ok) return send(res, 401, { error: 'bad token' });
 
   const me = req.headers['x-termivin-agent'] || parsed.searchParams.get('agent');
@@ -534,7 +549,10 @@ async function handle(req, res) {
         return send(res, 404, { error: `no such agent in this workspace: ${body.to || '@all'}` });
       }
     }
-    const ttl = Math.min(Number(body.ttl) || DEFAULT_TTL, DEFAULT_TTL);
+    // ttl counts down one per hop; 0 means the chain is exhausted. (A plain
+    // `Number(ttl) || DEFAULT` would turn 0 back into the default.)
+    const askedTtl = Number(body.ttl);
+    const ttl = body.ttl == null || !Number.isFinite(askedTtl) ? DEFAULT_TTL : Math.min(askedTtl, DEFAULT_TTL);
     if (ttl <= 0) return send(res, 200, { ok: true, delivered: 0, note: 'ttl exhausted' });
 
     const mine = describe(me);
@@ -543,8 +561,8 @@ async function handle(req, res) {
       from: me,
       fromName: mine.name,
       kind: body.kind || 'note',
-      subject: body.subject ? String(body.subject).slice(0, 200) : '',
-      body: String(body.body || '').slice(0, 20000),
+      subject: body.subject ? stripControl(body.subject).slice(0, 200) : '',
+      body: stripControl(body.body || '').slice(0, 20000),
       corr: body.corr || null,
       ttl: ttl - 1,
       topic: topicName,

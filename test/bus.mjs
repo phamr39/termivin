@@ -81,6 +81,17 @@ check('message carries sender name', got.json.messages[0].fromName === 'TermiFas
 const empty = await call('t2', 'GET', '/recv');
 check('recv drains the queue', empty.json.messages.length === 0, empty.json);
 
+const spent = await call('t1', 'POST', '/publish', { to: 'TermiEco', body: 'hop', ttl: 0 });
+check('ttl 0 is not delivered', spent.json.delivered === 0, spent.json);
+await call('t1', 'POST', '/publish', { to: 'TermiEco', body: 'last hop', ttl: 1 });
+const hop = await call('t2', 'GET', '/recv');
+check('ttl counts down per hop', hop.json.messages.length === 1 && hop.json.messages[0].ttl === 0, hop.json);
+
+await call('t1', 'POST', '/publish', { to: 'TermiEco', subject: 'x\x1b]0;pwn\x07', body: 'a\x1b[2Jb\n\tc\x9b' });
+const esc = await call('t2', 'GET', '/recv');
+const escMsg = esc.json.messages[0] || {};
+check('control characters are stripped', escMsg.body === 'a[2Jb\n\tc' && escMsg.subject === 'x]0;pwn', escMsg);
+
 // --- long-poll ---
 const t0 = Date.now();
 const pollPromise = call('t2', 'GET', '/recv?wait=10');
@@ -198,7 +209,11 @@ check('CLI who marks self', cliWho.includes('← you'), cliWho);
 const cliSend = await cli('t2', ['send', 'TermiFast', 'ping from the CLI', '--ask']);
 check('CLI send reports the recipient', cliSend.includes('Sent to: TermiFast'), cliSend);
 
+const cliAskFirst = await cli('t2', ['send', '--ask', 'TermiFast', 'flag before the text']);
+check('CLI --ask before the text keeps the text', cliAskFirst.includes('Sent to: TermiFast'), cliAskFirst);
+
 const cliRecv = await cli('t1', ['recv']);
+check('CLI recv prints a message sent with a leading --ask', cliRecv.includes('flag before the text'), cliRecv);
 check('CLI recv prints the message', cliRecv.includes('ping from the CLI'), cliRecv);
 check('CLI recv flags a question', cliRecv.includes('needs a reply'), cliRecv);
 
