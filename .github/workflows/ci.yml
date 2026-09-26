@@ -1,0 +1,31 @@
+# Headless checks on every push and pull request, on all three platforms the
+# app ships for: syntax + packaging (ci-check), unit tests for the pure
+# renderer modules, and the agent-bus server + CLI end to end. The Electron
+# E2E suites need a display and a running app, and are run locally.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npm test

@@ -3,6 +3,23 @@
 All notable changes to Termivin are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Restart a terminal in place, keeping its session.** Pane ⋯ → *Restart (keep session)* stops the process and starts it again with the terminal's restore command — `claude --continue` / `codex resume --last`, with the permission mode kept — while the old output stays on screen. Handy after updating Claude Code: the conversation picks up where it was, now on the new binary. It asks first only when something would be lost (the agent is mid-step or an approval is pending) or when another running terminal shares the folder, since `--continue` resumes the newest session there.
+- **CI on every push and pull request** — Windows, macOS and Linux run the syntax/packaging checks, new unit tests for `state.js` and approval detection, and the agent-bus suite.
+
+### Fixed
+
+- **Restarting or reloading could mark a live terminal as exited.** A killed process reports its exit asynchronously; when a new process had already taken over the same terminal id, the old one's exit removed the new one from the PTY table and told the renderer it had died — input went nowhere and the new shell was orphaned. PTY events now only count when they come from the process currently registered under the id.
+- **Links in terminal output open in your browser**, not inside the app window — and the window no longer navigates anywhere but its own page (a dropped URL or a link could previously load a page with the app's privileged bridge attached).
+- **Deleting a workspace hands attached windows back to the desktop** instead of leaving them stuck inside Termivin.
+- **Closing a terminal during a restore** no longer brings it back as an invisible process.
+- **A corrupt state file no longer wipes your workspaces.** Saves are fsynced and retried when Windows briefly locks the file; a backup is kept, an unreadable file is set aside (`termivin-state.json.corrupt-<time>`) and the backup loaded instead of starting empty.
+- **The Win32 helper can no longer crash the app** when it dies mid-call.
+- **Agent bus:** `ttl` actually limits hops now (0 was read as "default"); control characters are stripped from messages so one agent cannot inject terminal escape sequences into another; `topics.json`/`profiles.json` are written atomically; renamed terminals are visible to `who`/`send` immediately; `termivin send --ask <to> <text>` no longer drops the recipient.
+
 ## [0.4.0] — 2026-09-01
 
 The workspace dashboard learns to surface who is waiting on whom, the agent bus stops silently dropping mail after long sessions, and the app picks up nine new themes including its first two light modes.
