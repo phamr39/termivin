@@ -48,21 +48,72 @@ function stateFile() {
   return path.join(app.getPath('userData'), 'termivin-state.json');
 }
 
+// A missing file means "first run"; an unreadable one must never be treated
+// the same way — the renderer would start empty and the next save would
+// overwrite the user's workspaces. Fall back to the backup, and keep the
+// broken file aside so it can still be recovered by hand.
 function readState() {
+  const file = stateFile();
+  if (!fs.existsSync(file)) return readJson(file + '.bak');
+  const state = readJson(file);
+  if (state) return state;
+  try { fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
+  console.error('State file unreadable, falling back to the backup');
+  return readJson(file + '.bak');
+}
+
+function readJson(file) {
   try {
-    const raw = fs.readFileSync(stateFile(), 'utf8');
-    return JSON.parse(raw);
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return value && typeof value === 'object' ? value : null;
   } catch {
     return null;
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+let lastBackupAt = 0;
+
+// Write-to-temp + fsync + rename, so a crash leaves either the old or the new
+// file. On Windows an antivirus or indexer briefly holding the target makes
+// rename fail with EPERM/EBUSY — retry, then fall back to a plain copy.
+function writeJsonAtomic(file, value) {
+  const tmp = file + '.tmp';
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeSync(fd, JSON.stringify(value, null, 2));
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+      if (attempt >= 4) {
+        fs.copyFileSync(tmp, file);
+        try { fs.unlinkSync(tmp); } catch {}
+        return;
+      }
+      sleepSync(25 * (attempt + 1));
+    }
   }
 }
 
 function writeState(state) {
   try {
     const file = stateFile();
-    const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
-    fs.renameSync(tmp, file);
+    // Saves are debounced but frequent; a backup a minute is plenty.
+    if (Date.now() - lastBackupAt > 60000 && readJson(file)) {
+      fs.copyFileSync(file, file + '.bak');
+      lastBackupAt = Date.now();
+    }
+    writeJsonAtomic(file, state);
     return true;
   } catch (err) {
     console.error('Failed to save state:', err);
@@ -204,6 +255,7 @@ function ensureStartMenuShortcut(iconPath, appRoot) {
       '-Icon', iconPath,
       '-Aumid', 'com.termivin.app',
     ], { stdio: 'ignore', windowsHide: true, detached: true });
+    child.on('error', () => {});
     child.unref();
   } catch {}
 }
@@ -397,7 +449,16 @@ function ensureEmbedHelper() {
     }
   });
   embedProc.stderr.on('data', (d) => console.error('[win-embed]', d.toString().trim()));
+  // A dead helper surfaces as an async EPIPE on stdin or a spawn 'error' —
+  // unhandled, either one would take the whole main process down.
+  const proc = embedProc;
+  proc.stdin.on('error', (err) => console.error('[win-embed] stdin', err.code || err));
+  proc.on('error', (err) => {
+    console.error('[win-embed] failed', err.code || err);
+    if (embedProc === proc) embedProc = null;
+  });
   embedProc.on('exit', () => {
+    if (embedProc !== proc) return; // a newer helper already took over
     embedProc = null;
     for (const p of embedPending.values()) p.resolve({ ok: false, error: 'helper exited' });
     embedPending.clear();
