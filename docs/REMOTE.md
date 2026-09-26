@@ -6,6 +6,18 @@ there. The relay only authenticates and forwards; the phone is a **control
 tower** (triage approvals, nudge agents, manage terminal lifecycles), not a
 terminal emulator first.
 
+## Quick start
+
+1. **Relay** (any machine with Docker — see [`server/README.md`](../server/README.md)):
+   `cd server && docker compose up -d`, then
+   `docker compose exec relay termivin-relay host add "My PC"` → enrollment code.
+2. **PC**: Termivin → ⚙ Settings → **Remote** → relay URL + code → *Connect
+   this PC* → *Show pairing code*.
+3. **Phone**: install the app ([`mobile/README.md`](../mobile/README.md)) →
+   scan the QR (or paste the code).
+
+Keep the PC awake with Termivin open: the phone manages it, the PC runs it.
+
 ## Topology
 
 ```
@@ -124,6 +136,20 @@ carries `screenHash` (hash of the prompt region when it was detected). Before
 sending keys the host recomputes it; if the prompt changed it answers
 `error:"prompt_changed"` and sends nothing. Otherwise a late tap could approve
 a different command.
+
+### Prompt kinds
+
+Detection lives in `src/shared/approval.js` (used by both the desktop UI and
+the main-process hub):
+
+| kind | looks like | answering option N |
+| --- | --- | --- |
+| `menu` | `❯ 1. Yes` / `2. …` — numbered, with a selection marker, at the end of the buffer | types `N` |
+| `select` | `❯ No, exit` / `Yes, I trust this folder` + "Enter to confirm" — unnumbered arrow list (Claude's folder-trust dialog) | ↑/↓ from the marked row, then Enter |
+| `yn` | ends in `[y/N]`, `(yes/no)` | `y⏎` / `n⏎` |
+| `enter` | "Do you want to…?", "Press enter to continue" | Enter / Esc |
+
+A numbered list without a marker (a plan in an agent's answer) is not a prompt.
 
 ### Attention (the phone's inbox)
 
