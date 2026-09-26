@@ -25,6 +25,12 @@ const CJS = [
   'src/bus-client.js',
   'src/mac-app-name.js',
   'bin/termivin.js',
+  'src/hub.js',
+  'src/remote/index.js',
+  'src/remote/host-link.js',
+  'src/remote/chat.js',
+  'src/remote/transcripts.js',
+  'src/remote/turns.js',
 ];
 const ESM = [
   'src/renderer/app.js',

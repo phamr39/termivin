@@ -7,11 +7,14 @@ const path = require('path');
 const { HostLink } = require('./host-link');
 const { ChatStore } = require('./chat');
 const { TranscriptWatcher } = require('./transcripts');
+const { TurnTracker, screenSummary, headline } = require('./turns');
 
 const SNAPSHOT_DEBOUNCE_MS = 400;
 const TRANSCRIPT_POLL_MS = 2500;
 const RENDERER_TIMEOUT_MS = 15000;
 const PROMPT_ENTER_DELAY_MS = 150;
+const PROGRESS_THROTTLE_MS = 700;
+const SCREEN_TURN_MIN_MS = 3500; // a command that never printed still counts as done after this
 
 // Keys a phone may send without the "input" scope: quick replies only.
 const QUICK_KEYS = {
@@ -88,6 +91,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
             pendingMail: pendingByAgent.get(t.id) || 0,
             exitCode: s && !s.running ? s.exitCode : null,
             startedAt: s ? s.startedAt : null,
+            title: turns.title(t.id),
           };
         }),
       })),
@@ -139,6 +143,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
   hub.on('status', (termId) => {
     pushSnapshot();
     if (hub.status(termId) === 'idle') flushPrompt(termId);
+    checkScreenTurn(termId);
   });
   hub.on('attention', pushAttention);
   hub.on('data', (termId, seq, data) => {
@@ -171,28 +176,77 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
     if (link.online) link.sendJson({ t: 'event', kind: 'chat', data: { conv, msg } });
   });
 
-  const transcripts = new TranscriptWatcher((termId, msgs) => {
-    const who = describe(termId);
-    if (!who) return;
-    const mine = sentPrompts.get(termId) || [];
-    for (const m of msgs) {
-      if (m.role === 'user') {
-        // A prompt the phone typed comes back through the transcript — the
-        // chat already shows it as the owner's message.
-        const k = mine.findIndex((p) => norm(p.text) === norm(m.text));
-        if (k !== -1) {
-          mine.splice(k, 1);
-          continue;
-        }
+  // One chat message per turn of work (see turns.js); progress in between.
+  const progressAt = new Map(); // termId -> last progress sent
+  function sendProgress(termId, info) {
+    if (!link.online) return;
+    const now = Date.now();
+    if (info && now - (progressAt.get(termId) || 0) < PROGRESS_THROTTLE_MS) return;
+    progressAt.set(termId, info ? now : 0);
+    link.sendJson({ t: 'event', kind: 'progress', data: { conv: 'dm:' + termId, termId, active: !!info, ...(info || {}) } });
+  }
+
+  const turns = new TurnTracker({
+    post(termId, msg, { notify }) {
+      const who = describe(termId);
+      if (!who) return;
+      chat.add('dm:' + termId, { ...msg, from: termId, fromName: who.name, notify: !!notify });
+    },
+    prompt(termId, e) {
+      const who = describe(termId);
+      if (!who) return;
+      // A prompt the phone typed comes back through the transcript — the
+      // chat already shows it as the owner's message.
+      const mine = sentPrompts.get(termId) || [];
+      const k = mine.findIndex((m) => norm(m.text) === norm(e.text));
+      if (k !== -1) {
+        mine.splice(k, 1);
+        return;
       }
       chat.add('dm:' + termId, {
-        id: m.id, ts: m.ts, kind: m.kind, text: m.text,
-        role: m.role === 'agent' ? 'agent' : 'desktop',
-        from: m.role === 'agent' ? termId : 'desktop',
-        fromName: m.role === 'agent' ? who.name : 'You (desktop)',
+        id: e.id, ts: e.ts, kind: 'text', text: e.text, role: 'desktop', from: 'desktop', fromName: 'You (desktop)',
       });
-    }
+    },
+    progress: sendProgress,
   });
+
+  const transcripts = new TranscriptWatcher((termId, events, opts) => turns.onEvents(termId, events, opts));
+
+  // Terminals without a transcript: a prompt from the phone opens a turn, the
+  // terminal going quiet closes it, and the summary is what it printed.
+  const screenTurns = new Map(); // termId -> { id, mark, startedAt, text, sawWorking }
+  function openScreenTurn(termId, text) {
+    const s = hub.get(termId);
+    if (!s) return;
+    const who = describe(termId);
+    if (!who || who.type === 'claude') return;
+    screenTurns.set(termId, { id: 'turn:scr:' + Date.now().toString(36), mark: hub.mark(termId), startedAt: Date.now(), text, sawWorking: false });
+    sendProgress(termId, { startedAt: Date.now(), steps: 0, last: text.slice(0, 120) });
+  }
+  function checkScreenTurn(termId) {
+    const t = screenTurns.get(termId);
+    if (!t) return;
+    const st = hub.status(termId);
+    if (st === 'working' || st === 'approval') {
+      t.sawWorking = true;
+      return;
+    }
+    if (st !== 'idle' && st !== 'exited') return;
+    if (!t.sawWorking && Date.now() - t.startedAt < SCREEN_TURN_MIN_MS) return;
+    screenTurns.delete(termId);
+    sendProgress(termId, null);
+    const summary = screenSummary(hub.linesSince(termId, t.mark), t.text);
+    const who = describe(termId);
+    if (!who) return;
+    const lastLine = summary.split('\n').filter(Boolean).pop() || '';
+    chat.add('dm:' + termId, {
+      id: t.id, kind: 'summary', role: 'agent', from: termId, fromName: who.name, mono: true,
+      text: summary || '(no output)', headline: headline(lastLine) || 'Finished',
+      prompt: t.text.slice(0, 300), steps: [],
+      stats: { durationMs: Date.now() - t.startedAt, exited: st === 'exited' },
+      notify: true,
+    });
+  }
 
   function norm(text) {
     return String(text || '').replace(/\s+/g, ' ').trim();
@@ -204,6 +258,8 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
       .filter(({ t }) => t.type === 'claude' && hub.get(t.id) && hub.get(t.id).running)
       .map(({ t }) => ({ termId: t.id, cwd: t.cwd, startedAt: hub.get(t.id).startedAt }));
     transcripts.poll(terms);
+    for (const t of terms) turns.tick(t.termId, { idle: hub.status(t.termId) === 'idle' });
+    for (const termId of screenTurns.keys()) checkScreenTurn(termId);
   }, TRANSCRIPT_POLL_MS);
 
   function onBusEvent(evt) {
@@ -250,6 +306,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
     if (!queue.length) pendingPrompts.delete(termId);
     if (typeInto(termId, next.text)) {
       rememberPrompt(termId, next.text);
+      openScreenTurn(termId, next.text);
       chat.update(next.conv, next.id, { state: 'delivered' });
     }
   }
@@ -288,6 +345,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
     if (s.status === 'idle' && !s.approval) {
       typeInto(termId, text);
       rememberPrompt(termId, text);
+      openScreenTurn(termId, text);
       chat.add(conv, { id, role: 'owner', kind: 'text', from: 'owner', fromName: 'You', text, via: 'prompt', state: 'delivered' });
       return { id, state: 'delivered' };
     }

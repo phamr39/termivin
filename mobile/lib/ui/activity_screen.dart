@@ -101,7 +101,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
                 ? const CircleAvatar(backgroundColor: TV.accent, child: Icon(Icons.person_rounded, color: Colors.white))
                 : CharacterAvatar(type: it.conv.type ?? _typeOf(m.from), size: 38),
             title: Text('$who$to', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-            subtitle: Text(m.text, maxLines: 3, overflow: TextOverflow.ellipsis),
+            subtitle: Text(m.preview, maxLines: 3, overflow: TextOverflow.ellipsis),
             trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
               Text(clock(m.ts), style: const TextStyle(color: TV.faint, fontSize: 11.5)),
               Text(it.conv.kind == 'group' ? '#${it.conv.title}' : it.conv.spaceName,

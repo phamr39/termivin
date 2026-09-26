@@ -71,9 +71,12 @@ class _ConvTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final group = conv.kind == 'group';
     final last = conv.last;
-    final preview = last == null
-        ? (group ? '${conv.members.length} members' : 'Say hi to ${conv.title}')
-        : '${last.mine ? 'You: ' : (group && last.fromName != null ? '${last.fromName}: ' : '')}${last.kind == 'tool' ? last.text : last.text.replaceAll('\n', ' ')}';
+    final working = conv.termId == null ? null : client.progress['${client.selectedHostId}\u0000${conv.termId}'];
+    final preview = working != null
+        ? 'working${working.steps > 0 ? ' · ${working.steps} steps' : ''}${working.last.isNotEmpty ? ' · ${working.last}' : ''}'
+        : last == null
+            ? (group ? '${conv.members.length} members' : 'Say hi to ${conv.title}')
+            : '${last.mine ? 'You: ' : (group && last.fromName != null ? '${last.fromName}: ' : '')}${last.preview.replaceAll('\n', ' ')}';
     return ListTile(
       key: Key('conv-${conv.conv}'),
       contentPadding: EdgeInsets.fromLTRB(group ? 14 : 30, 2, 14, 2),
@@ -95,7 +98,7 @@ class _ConvTile extends StatelessWidget {
           child: Text(preview,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: conv.unread > 0 ? TV.text : TV.dim, fontSize: 13)),
+              style: TextStyle(color: working != null ? TV.accent : (conv.unread > 0 ? TV.text : TV.dim), fontSize: 13)),
         ),
         if (conv.unread > 0)
           Container(

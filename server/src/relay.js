@@ -259,8 +259,8 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
         if (msg.kind === 'chat' && msg.data?.msg?.notify && push) {
           const m = msg.data.msg;
           push.send(db.devicesForHost(hostId), {
-            title: m.fromName || 'Termivin',
-            body: String(m.text || '').slice(0, 180),
+            title: m.kind === 'summary' ? `${m.fromName || 'Agent'} finished` : (m.fromName || 'Termivin'),
+            body: String(m.headline || m.text || '').slice(0, 180),
             data: { hostId, conv: msg.data.conv, kind: 'chat' },
             category: 'DEFAULT',
           });

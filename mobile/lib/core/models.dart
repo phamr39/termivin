@@ -181,12 +181,28 @@ class ChatMessage {
     this.subject = '',
     this.via,
     this.state,
+    this.headline = '',
+    this.prompt = '',
+    this.steps = const [],
+    this.stats = const {},
+    this.mono = false,
+    this.interrupted = false,
   });
   final String id;
   final int ts;
   final String role; // owner | agent | desktop | system
-  final String kind; // text | tool | bus | system
+  final String kind; // text | summary | tool | bus | system
   final String text;
+  // kind == summary: one finished turn of work
+  final String headline;
+  final String prompt;
+  final List<String> steps;
+  final Map<String, dynamic> stats;
+  final bool mono; // plain terminal output rather than markdown
+  final bool interrupted;
+
+  /// One line for list previews and notifications.
+  String get preview => kind == 'summary' ? '✓ ${headline.isNotEmpty ? headline : text}' : text;
   final String? from;
   final String? fromName;
   final String? toName;
@@ -210,7 +226,24 @@ class ChatMessage {
         subject: _s(j['subject']),
         via: _as<String>(j['via']),
         state: _as<String>(j['state']),
+        headline: _s(j['headline']),
+        prompt: _s(j['prompt']),
+        steps: (_as<List>(j['steps']) ?? const []).map((e) => e.toString()).toList(),
+        stats: _as<Map<String, dynamic>>(j['stats']) ?? const {},
+        mono: j['mono'] == true,
+        interrupted: j['interrupted'] == true,
       );
+}
+
+/// Live "working on it" state of one terminal's turn (not stored).
+class TurnProgress {
+  TurnProgress(this.hostId, this.termId, this.active, {this.startedAt, this.steps = 0, this.last = ''});
+  final String hostId;
+  final String termId;
+  final bool active;
+  final int? startedAt;
+  final int steps;
+  final String last;
 }
 
 class Conversation {

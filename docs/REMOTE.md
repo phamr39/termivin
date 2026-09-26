@@ -204,14 +204,17 @@ and quick commands instead.
 
 **What an agent "says"** — bubbles come from three sources, merged by time:
 
-1. Claude Code / Codex transcripts: assistant text turns become bubbles, tool
-   calls collapse into one-line cards ("✎ edited src/api/users.ts",
-   "▶ ran npm test — exit 0"). To tie a terminal to its transcript
-   deterministically, new Claude terminals start with
-   `claude --session-id <uuid>` and restore with `claude --resume <uuid>`
-   instead of `--continue` (which picks the newest session in the cwd and is
-   ambiguous when two terminals — e.g. a clone — share a folder). Codex:
-   match `session_meta` cwd + start time.
+1. **One summary per turn of work** (src/remote/turns.js). While an agent
+   works the phone sees a single live progress line ("TermiPearl is working
+   · 4 steps · ▶ npm test", not stored); when the turn ends one message lands
+   in the DM: the agent's final reply as a headline (full reply on tap), what
+   it did (edits / commands / reads, duration) and the step list, collapsed.
+   Claude Code: turns come from its transcript — a typed prompt opens one,
+   system/turn_duration closes it (end_turn + quiet as a fallback); the
+   terminal is bound to the newest session file in its folder written after
+   it started. Other terminals (Codex, custom agents, shells): a prompt sent
+   from the phone opens a turn, the terminal going idle closes it, and the
+   summary is what it printed after the prompt, read from the rendered screen.
 2. Bus messages addressed to `owner`, `@all` or the group's topics.
 3. System cards: approval requests (inline Approve / Deny with the options
    read from screen), exits, restores — the same objects as the Inbox.

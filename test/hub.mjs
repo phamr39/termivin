@@ -76,6 +76,23 @@ check('summary tracks the last output', hub.get('t1').summary === 'Ran npm test'
 const screen = hub.screen('t1');
 check('screen() serializes the headless buffer', screen.data.includes('Ran npm test') && screen.seq === hub.get('t1').seq);
 
+// ConPTY-style output: lines placed with cursor moves, not newlines
+hub.start('t3', { cols: 40, rows: 10, pid: 3 });
+// (xterm parses writes asynchronously — the hub only reads after output has
+// been quiet, so give the parser a moment here too)
+hub.data('t3', 'PS C:\\> ');
+await sleep(50);
+const mk = hub.mark('t3');
+hub.data('t3', 'dir\x1b[2;1HDirectory: C:\\x\x1b[3;1Hnotes.txt\x1b[4;1HPS C:\\> ');
+await sleep(50);
+check('linesSince reads rendered lines, not raw bytes',
+  JSON.stringify(hub.linesSince('t3', mk)) === JSON.stringify(['PS C:\\> dir', 'Directory: C:\\x', 'notes.txt', 'PS C:\\>']),
+  hub.linesSince('t3', mk));
+hub.data('t3', 'x'.repeat(55));
+await sleep(50);
+check('soft-wrapped rows are joined back', hub.linesSince('t3', mk).at(-1) === 'PS C:\\> ' + 'x'.repeat(55), hub.linesSince('t3', mk).at(-1));
+hub.stop('t3');
+
 hub.exit('t1', 1);
 check('abnormal exit shows up in attention', hub.attention(() => ({ name: 'x', spaceId: 'w' }))[0]?.kind === 'exited');
 hub.start('t1', { cols: 60, rows: 12, pid: 2 });

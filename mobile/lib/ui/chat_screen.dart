@@ -6,6 +6,7 @@ import '../core/chat_model.dart';
 import '../core/client.dart';
 import '../core/models.dart';
 import 'approval_card.dart';
+import 'chat_bubbles.dart';
 import 'terminal_screen.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -27,6 +28,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   StreamSubscription? _sub;
+  StreamSubscription? _progressSub;
+  TurnProgress? _progress;
   bool _loading = true;
   bool _more = true;
   bool _sending = false;
@@ -44,12 +47,20 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _merge(e.msg, isUpdate: e.isUpdate));
       _markRead();
     });
+    if (!isGroup && widget.conv.termId != null) {
+      _progress = client.progress['${widget.hostId}\u0000${widget.conv.termId}'];
+      _progressSub = client.progressEvents.listen((p) {
+        if (p.hostId != widget.hostId || p.termId != widget.conv.termId) return;
+        setState(() => _progress = p.active ? p : null);
+      });
+    }
     _load();
   }
 
   @override
   void dispose() {
     _sub?.cancel();
+    _progressSub?.cancel();
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -99,8 +110,8 @@ class _ChatScreenState extends State<ChatScreen> {
     widget.chats.markRead(widget.conv.conv, _messages.last.ts);
   }
 
-  Future<void> _send() async {
-    final text = _input.text.trim();
+  Future<void> _send([String? preset]) async {
+    final text = (preset ?? _input.text).trim();
     if (text.isEmpty) return;
     setState(() => _sending = true);
     final r = await guarded(context, () => client.cmd(widget.hostId, 'chat.send', {
@@ -111,7 +122,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() => _sending = false);
       if (r != null) {
-        _input.clear();
+        if (preset == null) _input.clear();
         if (r is Map && r['state'] == 'queued') {
           toast(context, 'It is busy — the message goes in as soon as it is idle.');
         }
@@ -193,27 +204,42 @@ class _ChatScreenState extends State<ChatScreen> {
         title: isGroup ? 'Workspace chat' : 'Talk to ${widget.conv.title}',
         body: isGroup
             ? 'Messages here reach every agent in the workspace over its bus. Agent-to-agent traffic shows up here too.'
-            : 'Your message is typed into its prompt when it is idle. Its replies and tool steps appear here.',
+            : 'Your message is typed into its prompt when it is idle. While it works you see its progress; when it finishes, one summary of what it did lands here.',
       );
     }
     final items = _messages.reversed.toList();
+    final progress = _progress;
+    final extra = (progress != null ? 1 : 0);
+    String? typeOf(String? id) => id == null ? null : ws?.terminals.where((t) => t.id == id).firstOrNull?.type;
     return ListView.builder(
       controller: _scroll,
       reverse: true,
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-      itemCount: items.length + (_more ? 1 : 0),
+      itemCount: items.length + extra + (_more ? 1 : 0),
       itemBuilder: (context, i) {
-        if (i == items.length) {
-          return Center(
-            child: TextButton(onPressed: () => _load(older: true), child: const Text('Load earlier')),
-          );
+        if (progress != null && i == 0) {
+          return ProgressBubble(progress: progress, name: widget.conv.title, type: typeOf(widget.conv.termId) ?? widget.conv.type);
         }
-        final m = items[i];
-        final prev = i + 1 < items.length ? items[i + 1] : null;
+        final k = i - extra;
+        if (k == items.length) {
+          return Center(child: TextButton(onPressed: () => _load(older: true), child: const Text('Load earlier')));
+        }
+        final m = items[k];
+        final prev = k + 1 < items.length ? items[k + 1] : null;
+        final newDay = prev == null || !_sameDay(prev.ts, m.ts);
         final showName = isGroup && !m.mine && (prev == null || prev.from != m.from || prev.mine);
-        return _Bubble(msg: m, showName: showName, typeOf: (id) => ws?.terminals.where((t) => t.id == id).firstOrNull?.type);
+        final bubble = m.kind == 'summary'
+            ? SummaryBubble(msg: m, type: typeOf(m.from) ?? widget.conv.type)
+            : TextBubble(msg: m, showName: showName, type: typeOf(m.from) ?? (isGroup ? null : widget.conv.type));
+        if (!newDay) return bubble;
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [DaySeparator(ts: m.ts), bubble]);
       },
     );
+  }
+
+  static bool _sameDay(int a, int b) {
+    final x = DateTime.fromMillisecondsSinceEpoch(a), y = DateTime.fromMillisecondsSinceEpoch(b);
+    return x.year == y.year && x.month == y.month && x.day == y.day;
   }
 
   Widget _buildComposer(TermInfo? term, bool canSend, bool online) {
@@ -248,6 +274,22 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         if (!isGroup && !isShell) const SizedBox(height: 6),
+        if (!isGroup && !isShell && canSend && _mode == 'prompt')
+          SizedBox(
+            height: 34,
+            child: ListView(scrollDirection: Axis.horizontal, children: [
+              for (final q in const ['continue', 'What is the status?', 'Summarize what you changed', 'Run the tests'])
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ActionChip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(q, style: const TextStyle(fontSize: 12.5)),
+                    onPressed: _sending ? null : () => _send(q),
+                  ),
+                ),
+            ]),
+          ),
+        if (!isGroup && !isShell && canSend && _mode == 'prompt') const SizedBox(height: 6),
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Expanded(
             child: TextField(
@@ -270,106 +312,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ]),
       ]),
-    );
-  }
-}
-
-class _Bubble extends StatelessWidget {
-  const _Bubble({required this.msg, required this.showName, required this.typeOf});
-  final ChatMessage msg;
-  final bool showName;
-  final String? Function(String id) typeOf;
-
-  @override
-  Widget build(BuildContext context) {
-    final m = msg;
-    if (m.kind == 'system' || m.role == 'system') {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: TV.panel, borderRadius: BorderRadius.circular(10)),
-            child: Text('${m.text} · ${clock(m.ts)}', style: const TextStyle(color: TV.dim, fontSize: 12)),
-          ),
-        ),
-      );
-    }
-    if (m.kind == 'tool') {
-      return Padding(
-        padding: const EdgeInsets.only(left: 38, top: 2, bottom: 2, right: 40),
-        child: Text(m.text,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: TV.faint)),
-      );
-    }
-    final mine = m.mine;
-    final desktop = m.role == 'desktop';
-    final right = mine || desktop;
-    final bg = mine ? TV.accent.withValues(alpha: 0.9) : desktop ? TV.border : TV.raised;
-    final header = [
-      if (showName && m.fromName != null) m.fromName!,
-      if (m.kind == 'bus' && m.toName != null) '→ ${m.toName}',
-      if (m.topic != null) '#${m.topic}',
-      if (desktop) 'typed on the PC',
-      if (m.via == 'bus' && !mine) 'via bus',
-    ].join('  ');
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: right ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!right) ...[
-            CharacterAvatar(type: m.from == null ? null : typeOf(m.from!), size: 28),
-            const SizedBox(width: 8),
-          ],
-          Flexible(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(11, 8, 11, 6),
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(14),
-                    topRight: const Radius.circular(14),
-                    bottomLeft: Radius.circular(right ? 14 : 4),
-                    bottomRight: Radius.circular(right ? 4 : 14),
-                  ),
-                  border: right ? null : Border.all(color: TV.border),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  if (header.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 3),
-                      child: Text(header,
-                          style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
-                              color: mine ? Colors.white70 : TV.character(m.from == null ? null : typeOf(m.from!)).color)),
-                    ),
-                  if (m.subject.isNotEmpty)
-                    Text(m.subject, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  SelectableText(m.text, style: TextStyle(color: mine ? Colors.white : TV.text, height: 1.35)),
-                  const SizedBox(height: 3),
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text(clock(m.ts), style: TextStyle(fontSize: 10.5, color: mine ? Colors.white60 : TV.faint)),
-                    if (mine && m.state != null) ...[
-                      const SizedBox(width: 4),
-                      Icon(m.state == 'queued' ? Icons.schedule_rounded : Icons.done_all_rounded,
-                          size: 13, color: Colors.white70),
-                      if (m.state == 'queued')
-                        const Text(' waiting for idle', style: TextStyle(fontSize: 10.5, color: Colors.white70)),
-                    ],
-                  ]),
-                ]),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

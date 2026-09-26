@@ -88,6 +88,10 @@ class RelayClient extends ChangeNotifier {
   final _chat = StreamController<ChatEvent>.broadcast();
   final _screens = StreamController<ScreenEvent>.broadcast();
   final _frames = StreamController<PtyFrame>.broadcast();
+  final _progress = StreamController<TurnProgress>.broadcast();
+  Stream<TurnProgress> get progressEvents => _progress.stream;
+  /// Latest progress per "host\u0000term" — for screens opened mid-turn.
+  final Map<String, TurnProgress> progress = {};
   Stream<ChatEvent> get chatEvents => _chat.stream;
   Stream<ScreenEvent> get screenEvents => _screens.stream;
   Stream<PtyFrame> get frames => _frames.stream;
@@ -384,6 +388,19 @@ class RelayClient extends ChangeNotifier {
       if (m is Map<String, dynamic>) {
         _chat.add(ChatEvent(hostId, data['conv'] as String? ?? '', ChatMessage.fromJson(m), isUpdate: m['update'] == true));
       }
+    } else if (kind == 'progress') {
+      final termId = data['termId'] as String? ?? '';
+      final p = TurnProgress(hostId, termId, data['active'] == true,
+          startedAt: (data['startedAt'] as num?)?.toInt(),
+          steps: (data['steps'] as num?)?.toInt() ?? 0,
+          last: data['last'] as String? ?? '');
+      if (p.active) {
+        progress['$hostId\u0000$termId'] = p;
+      } else {
+        progress.remove('$hostId\u0000$termId');
+      }
+      _progress.add(p);
+      notifyListeners(); // chat list shows who is working
     } else if (kind == 'screen') {
       final termId = data['termId'] as String? ?? '';
       final seq = (data['seq'] as num?)?.toInt() ?? 0;
@@ -435,6 +452,7 @@ class RelayClient extends ChangeNotifier {
     _chat.close();
     _screens.close();
     _frames.close();
+    _progress.close();
     super.dispose();
   }
 }

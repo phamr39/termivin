@@ -231,6 +231,7 @@ export function summarize(rawLines) {
     if (!c || c.length < 3) continue;
     if (CHROME.test(lines[i]) || OPTION.test(lines[i]) || MARKED.test(lines[i])) continue;
     if (/^(Windows PowerShell|Copyright \(C\) Microsoft|Install the latest PowerShell|PowerShell \d)/.test(c)) continue;
+    if (/^[▀-▟]/.test(c)) continue; // block-character art (Claude Code's banner)
     if (/^(PS [A-Z]:\\|[\w.-]+@[\w.-]+[:~]|[$#>❯]\s*$)/.test(c)) continue; // shell prompts
     if (/^[>❯›]\s/.test(c)) continue; // agent input box
     if (/^\?\s+for shortcuts/i.test(c)) continue;

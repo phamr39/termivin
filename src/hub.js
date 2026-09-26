@@ -172,6 +172,36 @@ class Hub extends EventEmitter {
     return s ? s.status : null;
   }
 
+  // A position in the rendered buffer (the cursor's line), to read what was
+  // printed after it later on.
+  mark(id) {
+    const s = this.sessions.get(id);
+    if (!s) return null;
+    const b = s.term.buffer.active;
+    return { line: b.baseY + b.cursorY, length: b.length };
+  }
+
+  // Rendered lines from a mark to the cursor, soft-wrapped rows joined back.
+  // Reading the screen (not the raw bytes) matters: ConPTY moves the cursor
+  // instead of printing newlines, so the byte stream has no line structure.
+  linesSince(id, mark) {
+    const s = this.sessions.get(id);
+    if (!s || !mark) return [];
+    const b = s.term.buffer.active;
+    const end = b.baseY + b.cursorY;
+    // Scrollback trimming shifts line numbers once the buffer is full.
+    const shift = Math.max(0, mark.length - b.length);
+    const out = [];
+    for (let i = Math.max(0, mark.line - shift); i <= end; i++) {
+      const line = b.getLine(i);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      if (line.isWrapped && out.length) out[out.length - 1] += text;
+      else out.push(text);
+    }
+    return out.map((l) => l.replace(/\s+$/, ''));
+  }
+
   // The screen as ANSI, for a viewer that just subscribed.
   screen(id) {
     const s = this.sessions.get(id);

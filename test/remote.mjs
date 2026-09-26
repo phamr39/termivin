@@ -194,6 +194,18 @@ check('DM shows the last message and unread count', dm.last && dm.unread >= 1, d
 const hist = await cmd('chat.history', { conv: 'dm:t1', limit: 10 });
 check('history returns the conversation in order', hist.ok && hist.data.map((m) => m.text).includes('please run the tests') && hist.data.at(-1).text === 'tests are green ✅', hist.data.map((m) => m.text));
 
+// a command sent to a shell comes back as ONE summary with its output
+await sleep(3200); // t2 idle
+const shellSend = await cmd('chat.send', { conv: 'dm:t2', text: 'npm test', mode: 'prompt' });
+check('command to an idle shell is typed', shellSend.ok && shellSend.data.state === 'delivered', shellSend);
+const progress = await until(() => inbox.find((m) => m.t === 'event' && m.kind === 'progress' && m.data.termId === 't2' && m.data.active));
+check('phone sees live progress while it runs', !!progress);
+hub.data('t2', 'npm test\r\n\x1b[32m✓\x1b[0m 42 passing (3s)\r\nPS C:\\> ');
+const shellSummary = await until(() => inbox.find((m) => m.t === 'event' && m.kind === 'chat' && m.data.conv === 'dm:t2' && m.data.msg.kind === 'summary'), 8000);
+check('the finished command posts one summary with its output', shellSummary && shellSummary.data.msg.text === '✓ 42 passing (3s)', shellSummary && shellSummary.data.msg);
+check('progress is cleared when it finishes', !!inbox.find((m) => m.t === 'event' && m.kind === 'progress' && m.data.termId === 't2' && !m.data.active));
+check('raw output is not posted as chat messages', inbox.filter((m) => m.t === 'event' && m.kind === 'chat' && m.data.conv === 'dm:t2' && m.data.msg.role === 'agent').length === 1);
+
 // model changes go to the renderer
 const r = await cmd('term.restart', { termId: 't1' });
 check('restart is handed to the renderer', r.ok && rendererCalls.at(-1).op === 'term.restart');

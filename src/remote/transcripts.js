@@ -13,7 +13,7 @@ const path = require('path');
 const os = require('os');
 
 const MAX_READ = 4 * 1024 * 1024;
-const BACKFILL = 40;
+const BACKFILL = 300; // events — the turn tracker keeps only the last few turns of them
 
 function projectsDir() {
   return path.join(os.homedir(), '.claude', 'projects');
@@ -50,11 +50,30 @@ function toolSummary(item) {
   }
 }
 
-// One transcript line → zero or more chat messages.
+// What kind of step a tool call is, for the turn summary's counters.
+function toolCategory(name) {
+  if (/^(Edit|MultiEdit|Write|NotebookEdit)$/.test(name)) return 'edit';
+  if (/^(Bash|PowerShell|BashOutput|KillShell)$/.test(name)) return 'command';
+  if (/^(Read|Grep|Glob|LS|WebFetch|WebSearch)$/.test(name)) return 'read';
+  return 'other';
+}
+
+// One transcript line → zero or more events:
+//   user  a prompt a person typed
+//   text  a piece of the agent's reply
+//   tool  a tool call (one-line summary + category)
+//   end   the turn finished (system/turn_duration, with its duration);
+//         'endHint' is the weaker end_turn stop reason, for older versions
+//   title Claude Code's generated session title
 function parseEntry(entry) {
-  if (!entry || entry.isSidechain || entry.isMeta) return [];
+  if (!entry) return [];
   const ts = Date.parse(entry.timestamp) || Date.now();
   const base = entry.uuid || `${ts}`;
+  if (entry.type === 'ai-title' && entry.aiTitle) return [{ type: 'title', text: String(entry.aiTitle).slice(0, 120) }];
+  if (entry.isSidechain || entry.isMeta) return [];
+  if (entry.type === 'system' && entry.subtype === 'turn_duration') {
+    return [{ type: 'end', id: `tx:${base}`, ts, durationMs: Number(entry.durationMs) || null }];
+  }
   if (entry.type === 'user' && entry.message) {
     // Only prompts a person typed — not tool results, hooks or slash-command
     // plumbing, which also arrive as "user" entries.
@@ -62,17 +81,18 @@ function parseEntry(entry) {
     if (!typed) return [];
     const text = textOf(entry.message.content).trim();
     if (!text || /^<(command-|local-command|system-reminder|bash-)/.test(text)) return [];
-    return [{ id: `tx:${base}`, ts, role: 'user', kind: 'text', text: text.slice(0, 8000) }];
+    return [{ type: 'user', id: `tx:${base}`, ts, text: text.slice(0, 8000) }];
   }
   if (entry.type === 'assistant' && entry.message && Array.isArray(entry.message.content)) {
     const out = [];
     entry.message.content.forEach((c, i) => {
       if (c.type === 'text' && c.text && c.text.trim()) {
-        out.push({ id: `tx:${base}:${i}`, ts, role: 'agent', kind: 'text', text: c.text.trim().slice(0, 12000) });
+        out.push({ type: 'text', id: `tx:${base}:${i}`, ts, text: c.text.trim().slice(0, 12000) });
       } else if (c.type === 'tool_use') {
-        out.push({ id: `tx:${base}:${i}`, ts, role: 'agent', kind: 'tool', text: toolSummary(c) });
+        out.push({ type: 'tool', id: `tx:${base}:${i}`, ts, text: toolSummary(c), category: toolCategory(c.name) });
       }
     });
+    if (entry.message.stop_reason === 'end_turn') out.push({ type: 'endHint', id: `tx:${base}:end`, ts });
     return out;
   }
   return [];
@@ -100,7 +120,7 @@ function readLines(file, from) {
 
 class TranscriptWatcher {
   constructor(onMessages) {
-    this.onMessages = onMessages; // (termId, messages[]) => void
+    this.onMessages = onMessages; // (termId, events[], { backfill }) => void
     this.bound = new Map(); // termId -> { file, offset }
   }
 
@@ -136,12 +156,12 @@ class TranscriptWatcher {
       // New binding (or the session moved to a newer file, e.g. /clear):
       // backfill the last few messages, then follow.
       const { lines, offset } = readLines(candidate.file, 0);
-      const msgs = lines.slice(-400).flatMap((l) => {
+      const events = lines.slice(-600).flatMap((l) => {
         try { return parseEntry(JSON.parse(l)); } catch { return []; }
-      }).slice(-BACKFILL);
+      });
       b = { file: candidate.file, offset, mtime: candidate.mtime };
       this.bound.set(termId, b);
-      if (msgs.length) this.onMessages(termId, msgs);
+      if (events.length) this.onMessages(termId, events.slice(-BACKFILL), { backfill: true });
       return;
     }
     if (!b) return;
@@ -151,7 +171,7 @@ class TranscriptWatcher {
     const msgs = lines.flatMap((l) => {
       try { return parseEntry(JSON.parse(l)); } catch { return []; }
     });
-    if (msgs.length) this.onMessages(termId, msgs);
+    if (msgs.length) this.onMessages(termId, msgs, { backfill: false });
   }
 }
 
