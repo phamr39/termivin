@@ -294,13 +294,23 @@ export async function spawnTerminal(meta, { useRestore = false, replay = useRest
   try { rt.fit.fit(); } catch {}
 
   const shell = meta.shell || defaultShell();
-  const command = commandOverride ?? (useRestore ? (meta.restoreCommand || meta.command) : meta.command);
+  let command = commandOverride ?? (useRestore ? (meta.restoreCommand || meta.command) : meta.command);
 
+  // Claimed before any await, so a second call cannot spawn twice.
   rt.running = true;
   rt.everStarted = true;
   rt.exitCode = null;
   rt.approval = null;
   rt.lastDataAt = Date.now();
+
+  // `claude --continue` exits with "No conversation found" in a folder that
+  // has no session yet (a terminal restored or restarted before anyone typed
+  // in it) — start a fresh session there instead.
+  if (/\bclaude\b.*(--continue|\s-c\b)/.test(command || '') && window.termivin.claudeHasSession &&
+      !(await window.termivin.claudeHasSession(meta.cwd))) {
+    command = (command || '').replace(/\s+(--continue|-c)\b/, '');
+  }
+  if (runtimes.get(meta.id) !== rt) return { ok: false, error: 'terminal closed' };
 
   if (replay && meta.savedTail && meta.savedTail.length) {
     rt.xterm.write('\x1b[90m── previous session ──\x1b[0m\r\n');
@@ -445,7 +455,7 @@ export function isRunning(termId) {
 export function approve(termId, yes) {
   const rt = runtimes.get(termId);
   if (!rt || !rt.running || !rt.approval) return;
-  window.termivin.ptyWrite(termId, approvalKeys(rt.approval.kind, yes));
+  window.termivin.ptyWrite(termId, approvalKeys(rt.approval.kind, yes, rt.approval));
   rt.answeredHash = rt.approval.hash;
   rt.approval = null;
   emit(termId);

@@ -42,6 +42,7 @@ const procStats = require('./proc-stats');
 const tokenUsage = require('./token-usage');
 const { Hub } = require('./hub');
 const { createRemote, rendererBridge } = require('./remote');
+const { projectSlug } = require('./remote/transcripts');
 const QRCode = require('qrcode');
 
 let win = null;
@@ -281,6 +282,18 @@ function loginShellArgs(shell) {
   return /\/(zsh|bash|sh|fish)$/.test(shell || '') ? ['-l'] : [];
 }
 
+// Launched from inside a Claude Code session (e.g. `termivin` typed in one),
+// the app inherits that session's markers — and a `claude` started in our
+// terminals then believes it is a child session (it even stops saving its
+// transcript). Terminals get the user's environment, not that session's.
+const INHERITED_SESSION_VARS = /^(CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(CHILD_SESSION|SESSION_ID|SESSION_ATTENDED|ENTRYPOINT|EXECPATH|MESSAGING_\w+))$/;
+
+function terminalEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (INHERITED_SESSION_VARS.test(k)) delete env[k];
+  return env;
+}
+
 function busEnv(termId, spaceId, name) {
   const { url } = bus.info();
   if (!url) return {};
@@ -313,7 +326,7 @@ ipcMain.handle('pty:create', (event, opts) => {
       rows,
       cwd: cwd && fs.existsSync(cwd) ? cwd : app.getPath('home'),
       env: {
-        ...process.env,
+        ...terminalEnv(),
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
         // Agent bus credentials — an agent needs no config beyond these.
@@ -682,6 +695,16 @@ ipcMain.handle('external:cwds', async (event, pid) => {
 // Recent Claude Code project directories (from ~/.claude/projects transcripts)
 // — used as suggestions when converting an external terminal to a Claude one.
 ipcMain.handle('claude:recent-projects', () => recentClaudeProjects());
+
+// Does Claude Code have a saved session for this folder? (--continue needs one)
+ipcMain.handle('claude:has-session', (event, cwd) => {
+  try {
+    const dir = path.join(os.homedir(), '.claude', 'projects', projectSlug(cwd || app.getPath('home')));
+    return fs.readdirSync(dir).some((f) => f.endsWith('.jsonl'));
+  } catch {
+    return false;
+  }
+});
 
 function recentClaudeProjects() {
   try {

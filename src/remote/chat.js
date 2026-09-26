@@ -116,7 +116,7 @@ class ChatStore extends EventEmitter {
 
   unread(conv) {
     const since = this.readAt[conv] || 0;
-    return this.read(conv, 200).filter((m) => m.ts > since && m.role !== 'owner').length;
+    return this.read(conv, 200).filter((m) => m.ts > since && m.role !== 'owner' && m.role !== 'system').length;
   }
 }
 

@@ -65,6 +65,47 @@ function findMenu(lines) {
   return { start: i, end, options };
 }
 
+// An arrow-key selection list without numbers (Claude Code's folder-trust
+// dialog): exactly one line carries the ❯ marker, the other options are
+// aligned with its text, and a "Enter to confirm/select" hint sits below.
+const SELECT_HINT = /enter to (confirm|select)/i;
+const MARKED = /^(\s*)([❯›▸▶→])\s+(\S.*?)\s*$/;
+
+function findSelect(lines) {
+  let end = lines.length - 1;
+  let hint = false;
+  while (end >= 0 && lines.length - 1 - end <= 4) {
+    const l = lines[end];
+    if (SELECT_HINT.test(l)) hint = true;
+    if (!l.trim() || CHROME.test(l)) end--;
+    else break;
+  }
+  if (!hint || end < 1) return null;
+  // Find the marker line within the block that ends at `end`.
+  let markerAt = -1;
+  let col = -1;
+  for (let i = end; i >= 0 && end - i < 10; i--) {
+    const m = MARKED.exec(lines[i]);
+    if (m) {
+      markerAt = i;
+      col = lines[i].indexOf(m[3]);
+      break;
+    }
+    if (!lines[i].trim()) break;
+  }
+  if (markerAt === -1) return null;
+  const aligned = (l) => l.trim() && !MARKED.test(l) && l.length - l.trimStart().length === col;
+  let start = markerAt;
+  while (start - 1 >= 0 && aligned(lines[start - 1])) start--;
+  let stop = markerAt;
+  while (stop + 1 <= end && aligned(lines[stop + 1])) stop++;
+  if (stop !== end) return null; // something else sits between the list and the hint
+  const labels = [];
+  for (let i = start; i <= stop; i++) labels.push(clean(lines[i].replace(MARKED, '$3')));
+  if (labels.length < 2 || labels.length > 8) return null;
+  return { start, end: stop, labels, selected: markerAt - start };
+}
+
 // Returns null, or { kind, hint, options, question, excerpt, hash }.
 //   kind: 'menu' (numbered selection), 'yn', 'enter'
 //   hash: identifies this particular prompt (see hashText)
@@ -91,6 +132,36 @@ export function detectApproval(rawLines) {
       question,
       excerpt,
       hash: hashText(region),
+    };
+  }
+
+  const select = !menu && findSelect(lines);
+  if (select && select.labels.some((l) => YES_WORD.test(l))) {
+    // Paragraphs above the list (wrapped lines joined back together).
+    const paras = [];
+    let cur = [];
+    for (let k = select.start - 1; k >= 0 && paras.length < 5; k--) {
+      const c = clean(lines[k]);
+      if (c && !CHROME.test(lines[k])) cur.unshift(c);
+      else if (cur.length) {
+        paras.unshift(cur.join(' '));
+        cur = [];
+      }
+      if (!c && CHROME.test(lines[k]) && /[─━═]/.test(lines[k])) break; // top border of the dialog
+    }
+    if (cur.length) paras.unshift(cur.join(' '));
+    const useful = paras.filter((p) => !/^security guide$/i.test(p));
+    const question = useful.find((p) => p.includes('?')) || useful[useful.length - 1] || '';
+    const excerpt = useful.filter((p) => p !== question).slice(-3).join('\n');
+    const above = paras;
+    return {
+      kind: 'select',
+      hint: 'Enter = selected option · Esc = cancel',
+      options: select.labels.map((label, i) => ({ key: String(i + 1), label })),
+      selected: select.selected,
+      question,
+      excerpt,
+      hash: hashText([...above, ...select.labels].join('\n')),
     };
   }
 
@@ -123,7 +194,12 @@ export function detectApproval(rawLines) {
 }
 
 // Keys for a plain approve/deny (desktop buttons, notification actions).
-export function approvalKeys(kind, approve) {
+export function approvalKeys(kind, approve, approval = null) {
+  if (kind === 'select' && approval) {
+    // The preselected entry may well be "No" — pick the first yes-like option.
+    const yes = approval.options.find((o) => YES_WORD.test(o.label));
+    return approve && yes ? optionKeys(approval, yes.key) : '\x1b';
+  }
   if (kind === 'yn') return approve ? 'y\r' : 'n\r';
   return approve ? '\r' : '\x1b'; // 'menu' (option 1 is preselected) / 'enter'
 }
@@ -134,6 +210,13 @@ export function optionKeys(approval, key) {
   if (approval.kind === 'menu') {
     if (key === 'esc') return '\x1b';
     return approval.options.some((o) => o.key === key) ? key : null;
+  }
+  if (approval.kind === 'select') {
+    if (key === 'esc') return '\x1b';
+    const i = Number(key) - 1;
+    if (!Number.isInteger(i) || i < 0 || i >= approval.options.length) return null;
+    const d = i - (approval.selected || 0);
+    return (d > 0 ? '\x1b[B'.repeat(d) : '\x1b[A'.repeat(-d)) + '\r';
   }
   if (approval.kind === 'yn') return key === 'y' ? 'y\r' : key === 'n' ? 'n\r' : null;
   return key === 'enter' ? '\r' : key === 'esc' ? '\x1b' : null;
@@ -146,7 +229,8 @@ export function summarize(rawLines) {
   for (let i = lines.length - 1; i >= 0 && lines.length - i < 40; i--) {
     const c = clean(lines[i]);
     if (!c || c.length < 3) continue;
-    if (CHROME.test(lines[i])) continue;
+    if (CHROME.test(lines[i]) || OPTION.test(lines[i]) || MARKED.test(lines[i])) continue;
+    if (/^(Windows PowerShell|Copyright \(C\) Microsoft|Install the latest PowerShell|PowerShell \d)/.test(c)) continue;
     if (/^(PS [A-Z]:\\|[\w.-]+@[\w.-]+[:~]|[$#>❯]\s*$)/.test(c)) continue; // shell prompts
     if (/^[>❯›]\s/.test(c)) continue; // agent input box
     if (/^\?\s+for shortcuts/i.test(c)) continue;

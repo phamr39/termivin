@@ -147,6 +147,35 @@ check('menu with a hint row below it',
   P.detectApproval(['Do you want to make this edit to a.ts?', '❯ 1. Yes', '  2. No', '', 'Esc to cancel · Tab to amend'])?.kind === 'menu');
 check('menu whose first option is not a yes → none',
   P.detectApproval(['Select a model:', '❯ 1. Opus', '  2. Sonnet']) === null);
+// Claude Code's folder-trust dialog: an arrow-key list without numbers,
+// with "No" preselected.
+const trust = [
+  '──────────────────────────────────────────────────────────────────────────────',
+  ' Accessing workspace:',
+  '',
+  ' C:\\work\\demo',
+  '',
+  ' Quick safety check: Is this a project you created or one you trust? (Like',
+  ' your own code, a well-known open source project, or work from your team). If',
+  " not, take a moment to review what's in this folder first.",
+  '',
+  " Claude Code'll be able to read, edit, and execute files here.",
+  '',
+  ' Security guide',
+  '',
+  ' ❯ No, exit',
+  '   Yes, I trust this folder',
+  '',
+  ' Enter to confirm · Esc to cancel',
+];
+const sel = P.detectApproval(trust);
+check('unnumbered select list (trust dialog) → select', sel?.kind === 'select' && sel.options.length === 2 && sel.selected === 0, sel);
+check('select option 2 = one ↓ then Enter', P.optionKeys(sel, '2') === '\x1b[B\r');
+check('select option 1 = Enter', P.optionKeys(sel, '1') === '\r');
+check('desktop Approve on a select picks the yes option, not the preselected No', P.approvalKeys('select', true, sel) === '\x1b[B\r');
+check('select without its Enter hint → none', P.detectApproval(trust.slice(0, -2)) === null);
+check('summarize skips option rows and the PowerShell banner',
+  P.summarize(['Windows PowerShell', 'Copyright (C) Microsoft Corporation. All rights reserved.', 'Bash command', '> 1. Yes', '  2. No']) === 'Bash command');
 check('summarize skips prompts and chrome',
   P.summarize(['Editing src/api/users.ts', '╭────╮', '│ >  │', '╰────╯', '? for shortcuts']) === 'Editing src/api/users.ts');
 

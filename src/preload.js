@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('termivin', {
   externalCwds: (pid) => ipcRenderer.invoke('external:cwds', pid),
   externalIsAttached: (hwnd) => ipcRenderer.invoke('external:is-attached', hwnd),
   claudeRecentProjects: () => ipcRenderer.invoke('claude:recent-projects'),
+  claudeHasSession: (cwd) => ipcRenderer.invoke('claude:has-session', cwd),
 
   // Remote (self-hosted relay + phone) — docs/REMOTE.md
   remoteStatus: () => ipcRenderer.invoke('remote:status'),
