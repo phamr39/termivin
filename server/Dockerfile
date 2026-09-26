@@ -10,7 +10,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY src ./src
-RUN ln -s /app/src/cli.js /usr/local/bin/termivin-relay && chmod +x /app/src/cli.js \
+# A wrapper rather than a symlink: a Windows checkout may give cli.js CRLF
+# line endings, which would break its shebang.
+RUN printf '#!/bin/sh\nexec node /app/src/cli.js "$@"\n' > /usr/local/bin/termivin-relay \
+ && chmod +x /usr/local/bin/termivin-relay \
  && mkdir -p /data && chown node:node /data
 
 USER node
