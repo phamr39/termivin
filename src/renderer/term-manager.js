@@ -268,6 +268,9 @@ function readTail(rt, n) {
 // --- Public API -----------------------------------------------------------
 
 export async function spawnTerminal(meta, { useRestore = false } = {}) {
+  // Restore loops await one spawn after another; a terminal closed (or a
+  // workspace deleted) in between must not come back as an untracked process.
+  if (!findTerminal(meta.id)) return { ok: false, error: 'terminal no longer exists' };
   const rt = ensureRuntime(meta);
   if (rt.external) return { ok: false, error: 'external windows cannot be spawned' };
   if (rt.running) return { ok: true };
@@ -311,6 +314,8 @@ export async function spawnTerminal(meta, { useRestore = false } = {}) {
     name: meta.name,
   });
 
+  // Closed while the PTY was starting — disposeTerminal already killed it.
+  if (runtimes.get(meta.id) !== rt) return res;
   if (!res.ok) {
     rt.running = false;
     rt.exitCode = -1;
@@ -331,16 +336,18 @@ export function stopTerminal(termId) {
   }
 }
 
-export function disposeTerminal(termId) {
+// `meta` is for callers that already removed the terminal from state (e.g. a
+// deleted workspace) — an attached window must still be handed back.
+export function disposeTerminal(termId, meta = null) {
   const rt = runtimes.get(termId);
   if (!rt) return;
   if (rt.running) window.termivin.ptyKill(termId);
   if (rt.attached) {
-    const found = findTerminal(termId);
-    if (found && found.meta.external) {
+    const external = (meta || findTerminal(termId)?.meta)?.external;
+    if (external) {
       window.termivin.externalDetach({
-        hwnd: found.meta.external.hwnd,
-        origStyle: found.meta.external.origStyle ?? null,
+        hwnd: external.hwnd,
+        origStyle: external.origStyle ?? null,
       });
     }
     rt.attached = false;

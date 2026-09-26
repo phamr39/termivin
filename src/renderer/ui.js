@@ -346,7 +346,7 @@ function startPaneRename(termId) {
   const nameEl = rt.pane.querySelector('.pane-name');
   if (!nameEl) return;
   inlineRename(nameEl, found.meta.name, (val) => {
-    if (val) S.renameTerminal(termId, val);
+    if (val) { S.renameTerminal(termId, val); syncBusRoster(); }
     renderTabs();
     renderDashboard();
     updatePanes();
@@ -469,7 +469,7 @@ export function renderSidebar() {
     const startRename = () => {
       item.draggable = false; // draggable parents break text selection in the input
       inlineRename(name, ws.name, (val) => {
-        if (val) S.renameWorkspace(ws.id, val);
+        if (val) { S.renameWorkspace(ws.id, val); syncBusRoster(); }
         renderSidebar();
         renderHeader();
       });
@@ -503,7 +503,7 @@ export function renderSidebar() {
         : `Delete workspace "${ws.name}"?`;
       if (!(await uiConfirm(msg, { title: 'Delete workspace', okLabel: 'Delete', danger: true }))) return;
       const orphans = S.removeWorkspace(ws.id);
-      for (const t of orphans) TM.disposeTerminal(t.id);
+      for (const t of orphans) TM.disposeTerminal(t.id, t);
       // topics anchored to this workspace have no home anymore — drop them
       try {
         const stats = await window.termivin.busStats();
@@ -703,7 +703,7 @@ export function renderTabs() {
     name.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       inlineRename(name, t.name, (val) => {
-        if (val) S.renameTerminal(t.id, val);
+        if (val) { S.renameTerminal(t.id, val); syncBusRoster(); }
         renderTabs();
         renderDashboard();
         updatePanes();
@@ -1517,7 +1517,7 @@ function setupCanvasInteractions() {
       const found = S.findTerminal(pane.dataset.termId);
       if (!found) return;
       inlineRename(nameEl, found.meta.name, (val) => {
-        if (val) S.renameTerminal(pane.dataset.termId, val);
+        if (val) { S.renameTerminal(pane.dataset.termId, val); syncBusRoster(); }
         renderTabs();
         updatePanes();
       });
@@ -2239,7 +2239,7 @@ export function setupChrome() {
     const item = document.querySelector(`.ws-item[data-ws-id="${S.getState().activeWorkspaceId}"] .ws-name`);
     if (item) {
       inlineRename(item, item.textContent, (val) => {
-        if (val) S.renameWorkspace(S.getState().activeWorkspaceId, val);
+        if (val) { S.renameWorkspace(S.getState().activeWorkspaceId, val); syncBusRoster(); }
         renderAll();
       });
     }
