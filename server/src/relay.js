@@ -92,6 +92,8 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
   // `${deviceId}:${cmdId}` -> { ts, result? , waiting: dconn[] }
   const dedupe = new Map();
 
+  let closing = false;
+
   const hostWss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
   const deviceWss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
 
@@ -191,7 +193,7 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
     ws.on('close', () => {
       clearTimeout(authTimer);
       clearInterval(ping);
-      if (!hostId) return;
+      if (!hostId || closing) return;
       const h = hostState(hostId);
       if (h.ws !== ws) return; // replaced
       h.ws = null;
@@ -334,7 +336,7 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
     ws.on('close', () => {
       clearTimeout(authTimer);
       clearInterval(ping);
-      if (!conn) return;
+      if (!conn || closing) return;
       for (const key of [...conn.subs]) {
         const [hostId, termId] = key.split('\0');
         unsubscribe(conn, hostId, termId);
@@ -493,6 +495,11 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
     const cutoff = Date.now() - DEDUPE_MS;
     for (const [k, v] of dedupe) if (v.ts < cutoff && v.result) dedupe.delete(k);
     try { db.prune(); } catch {}
+    // Revocations made from the admin CLI (another process) land here.
+    for (const [deviceId, set] of devices) {
+      const dev = db.getDevice(deviceId);
+      if (!dev || dev.revoked_at) for (const c of set) c.ws.close(4003, 'revoked');
+    }
   }, 60000);
 
   return {
@@ -524,6 +531,7 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
       return { hostsOnline: [...hosts.values()].filter((h) => h.online).length, devicesOnline: devices.size };
     },
     close() {
+      closing = true;
       clearInterval(sweeper);
       for (const h of hosts.values()) {
         clearTimeout(h.offlineTimer);

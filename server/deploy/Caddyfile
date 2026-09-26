@@ -1,0 +1,4 @@
+{$RELAY_DOMAIN} {
+	encode gzip
+	reverse_proxy relay:8787
+}
