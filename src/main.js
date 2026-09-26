@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, execFileSync } = require('child_process');
 const os = require('os');
+const { pathToFileURL } = require('url');
 
 // node-pty's macOS/Linux `spawn-helper` prebuilt binary loses its executable
 // bit when the package is unpacked from an npm tarball. node-pty execs that
@@ -168,6 +169,17 @@ function createWindow() {
       console.log(`[renderer:${e.level}] ${e.message}`);
     }
   });
+  // The window only ever shows our own page. Anything else — a link clicked in
+  // terminal output, a URL dropped on the canvas — would otherwise load inside
+  // Electron with the preload API attached. Links go to the system browser.
+  const indexUrl = pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalSafe(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url.split('#')[0] !== indexUrl) event.preventDefault();
+  });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.on('closed', () => {
     win = null;
@@ -252,10 +264,15 @@ ipcMain.handle('pty:create', (event, opts) => {
 
   ptys.set(id, proc);
 
+  // Ids are reused (restart, reload → restore), and a killed process reports
+  // its exit asynchronously — possibly after a new process took over the id.
+  // Only the process currently registered under the id may speak for it.
   proc.onData((data) => {
+    if (ptys.get(id) !== proc) return;
     if (win && !win.isDestroyed()) win.webContents.send('pty:data', id, data);
   });
   proc.onExit(({ exitCode }) => {
+    if (ptys.get(id) !== proc) return;
     ptys.delete(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', id, exitCode);
   });
@@ -636,6 +653,18 @@ ipcMain.handle('dialog:pick-folder', async (event, defaultPath) => {
   if (res.canceled || !res.filePaths.length) return null;
   return res.filePaths[0];
 });
+
+// ---------- Links ----------
+
+// Only web links leave the app; file:, javascript:, custom schemes are dropped.
+function openExternalSafe(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(u.href);
+  } catch {}
+}
+
+ipcMain.on('os:open-external', (event, url) => openExternalSafe(url));
 
 // ---------- Reveal a terminal's folder ----------
 

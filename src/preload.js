@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('termivin', {
 
   openFolder: (dir) => ipcRenderer.invoke('os:open-folder', dir),
   openInEditor: (dir) => ipcRenderer.invoke('os:open-editor', dir),
+  openExternal: (url) => ipcRenderer.send('os:open-external', url),
 
   clipboardRead: () => ipcRenderer.invoke('clipboard:read'),
   clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),

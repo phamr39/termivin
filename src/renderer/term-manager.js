@@ -106,7 +106,12 @@ export function ensureRuntime(meta) {
     });
     const fit = new FitAddon.FitAddon();
     xterm.loadAddon(fit);
-    xterm.loadAddon(new WebLinksAddon.WebLinksAddon());
+    // The addon's default handler opens the link inside Electron; send it to
+    // the system browser instead (main only lets http/https through).
+    xterm.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
+      event.preventDefault();
+      window.termivin.openExternal(uri);
+    }));
     xterm.open(rt.body);
     rt.xterm = xterm;
     rt.fit = fit;
