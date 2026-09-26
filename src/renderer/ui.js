@@ -385,6 +385,9 @@ function openPaneMenu(termId, anchor) {
   if (!meta.external) {
     add('↻   Refresh view', () => TM.refreshTerminal(termId));
     add('🧹  Clear scrollback', () => TM.clearScrollback(termId));
+    if (TM.isRunning(termId) && TM.restartCommand(meta)) {
+      add('⟳   Restart (keep session)', () => restartTerminal(termId));
+    }
     if (TM.isRunning(termId)) {
       add('■   Stop process', async () => {
         if (await uiConfirm(`Stop the process in "${meta.name}"? The terminal stays in the workspace.`,
@@ -415,6 +418,40 @@ function openPaneMenu(termId, anchor) {
     closePaneMenu();
   };
   window.addEventListener('mousedown', paneMenuOutside, true);
+}
+
+// Restart in place with the resume command — e.g. to pick up a Claude Code
+// update without losing the conversation. Confirm only when something could
+// actually be lost or resumed wrongly.
+async function restartTerminal(termId) {
+  const found = S.findTerminal(termId);
+  if (!found) return;
+  const { meta, ws } = found;
+  const command = TM.restartCommand(meta);
+  const warnings = [];
+  const st = TM.getStatus(termId);
+  if (st === 'working') warnings.push('It is working right now — the current step will be interrupted.');
+  if (st === 'approval') warnings.push('It is waiting for an approval — the prompt will be dismissed.');
+  // `--continue` / `--last` resume the newest session in the folder, which
+  // may belong to another running terminal in the same folder.
+  if (/--continue\b|\s-c\b|resume --last/.test(command)) {
+    const sibling = S.getState().workspaces.flatMap((w) => w.terminals).find((t) =>
+      t.id !== termId && t.type === meta.type && TM.isRunning(t.id) &&
+      (t.cwd || '').toLowerCase() === (meta.cwd || '').toLowerCase());
+    if (sibling) {
+      warnings.push(`"${sibling.name}" runs in the same folder — the newest session there may be resumed instead.`);
+    }
+  }
+  if (warnings.length) {
+    const ok = await uiConfirm(`Restart "${meta.name}" with \`${command}\`?\n\n${warnings.join('\n')}`,
+      { title: 'Restart terminal', okLabel: 'Restart' });
+    if (!ok) return;
+  }
+  await TM.restartTerminal(termId);
+  if (ws.id === S.getState().activeWorkspaceId) TM.focusTerminal(termId);
+  updatePanes();
+  renderSidebarBadges();
+  renderHeader();
 }
 
 function cloneTerminal(termId) {

@@ -267,7 +267,7 @@ function readTail(rt, n) {
 
 // --- Public API -----------------------------------------------------------
 
-export async function spawnTerminal(meta, { useRestore = false } = {}) {
+export async function spawnTerminal(meta, { useRestore = false, replay = useRestore, commandOverride = null } = {}) {
   // Restore loops await one spawn after another; a terminal closed (or a
   // workspace deleted) in between must not come back as an untracked process.
   if (!findTerminal(meta.id)) return { ok: false, error: 'terminal no longer exists' };
@@ -281,7 +281,7 @@ export async function spawnTerminal(meta, { useRestore = false } = {}) {
   try { rt.fit.fit(); } catch {}
 
   const shell = meta.shell || defaultShell();
-  const command = useRestore ? (meta.restoreCommand || meta.command) : meta.command;
+  const command = commandOverride ?? (useRestore ? (meta.restoreCommand || meta.command) : meta.command);
 
   rt.running = true;
   rt.everStarted = true;
@@ -289,7 +289,7 @@ export async function spawnTerminal(meta, { useRestore = false } = {}) {
   rt.approval = null;
   rt.lastDataAt = Date.now();
 
-  if (useRestore && meta.savedTail && meta.savedTail.length) {
+  if (replay && meta.savedTail && meta.savedTail.length) {
     rt.xterm.write('\x1b[90m── previous session ──\x1b[0m\r\n');
     for (const line of meta.savedTail.slice(-20)) {
       rt.xterm.write('\x1b[90m' + line + '\x1b[0m\r\n');
@@ -323,6 +323,40 @@ export async function spawnTerminal(meta, { useRestore = false } = {}) {
   }
   emit(meta.id);
   return res;
+}
+
+// The command a restart runs: the restore command (claude --continue, codex
+// resume --last — with the permission mode baked in), falling back to the
+// type's own resume command, then the startup command.
+export function restartCommand(meta) {
+  return meta.restoreCommand || typeInfo(meta.type).restoreCommand || meta.command || '';
+}
+
+// Restart in place: stop the process and start it again with the restore
+// command, keeping what is on screen. The conversation lives in the CLI's own
+// transcript, so e.g. after updating Claude Code the session picks up where it
+// was — now running the new binary.
+export async function restartTerminal(termId) {
+  const found = findTerminal(termId);
+  const rt = runtimes.get(termId);
+  if (!found || !rt || rt.external || !rt.xterm) return { ok: false, error: 'not restartable' };
+  const meta = found.meta;
+  if (rt.running) {
+    saveTail(termId);
+    window.termivin.ptyKill(termId);
+    rt.running = false;
+    rt.approval = null;
+    emit(termId);
+  }
+  rt.xterm.write('\r\n\x1b[90m── restarting: ' + restartCommand(meta) + ' ──\x1b[0m\r\n');
+  // Same trick as the restore replay: push the screen into scrollback and
+  // ignore ConPTY's startup scrollback clear, so the old output stays readable.
+  rt.xterm.write('\r\n'.repeat(rt.xterm.rows));
+  rt.protectScrollbackUntil = Date.now() + 4000;
+  // Let the old process exit and release its session files before resuming.
+  await new Promise((r) => setTimeout(r, 400));
+  if (!findTerminal(termId) || runtimes.get(termId) !== rt) return { ok: false, error: 'terminal closed' };
+  return spawnTerminal(meta, { useRestore: true, replay: false, commandOverride: restartCommand(meta) });
 }
 
 export function stopTerminal(termId) {
