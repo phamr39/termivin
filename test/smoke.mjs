@@ -120,8 +120,8 @@ await page.waitForTimeout(600);
 // The pane runs the platform's own shell, so the prompt has to be spelled in
 // its language: PowerShell on Windows, a POSIX shell everywhere else.
 const APPROVAL_CMD = process.platform === 'win32'
-  ? 'Write-Host "Do you want to proceed?"; Write-Host "1. Yes"; Write-Host "2. No"; $null = Read-Host'
-  : 'echo "Do you want to proceed?"; echo "1. Yes"; echo "2. No"; read _reply';
+  ? 'Write-Host "Do you want to proceed?"; Write-Host "> 1. Yes"; Write-Host "  2. No"; $null = Read-Host'
+  : 'echo "Do you want to proceed?"; echo "> 1. Yes"; echo "  2. No"; read _reply';
 await page.click('.pane:not(.hidden) .pane-body');
 await page.keyboard.type(APPROVAL_CMD, { delay: 10 });
 await page.keyboard.press('Enter');

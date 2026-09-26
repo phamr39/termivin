@@ -26,14 +26,12 @@ function userDataDir() {
 
 function credentials() {
   let url = process.env.TERMIVIN_URL;
-  let token = process.env.TERMIVIN_TOKEN;
-  if (!url || !token) {
-    // The app was restarted after this terminal spawned: the env still holds
-    // the old port/token, so re-read the file the server writes on start.
+  const token = process.env.TERMIVIN_TOKEN;
+  if (!url) {
+    // Fall back to the address the server writes on start. The token is per
+    // terminal and only ever lives in the terminal's own environment.
     try {
-      const f = JSON.parse(fs.readFileSync(path.join(userDataDir(), 'bus.json'), 'utf8'));
-      url = f.url;
-      token = f.token;
+      url = JSON.parse(fs.readFileSync(path.join(userDataDir(), 'bus.json'), 'utf8')).url;
     } catch {}
   }
   const agent = process.env.TERMIVIN_AGENT;

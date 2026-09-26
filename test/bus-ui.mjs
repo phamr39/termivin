@@ -38,19 +38,20 @@ await page.evaluate(() => {
 });
 await page.reload();
 await page.waitForSelector('#workspace-list .ws-item', { timeout: 15000 });
-const wsName = (await page.textContent('#workspace-list .ws-item .ws-name')).trim();
+const wsName = (await page.textContent('#workspace-list .ws-item.active .ws-name')).trim();
 ok('window is up, workspace: ' + wsName);
 
 // --- the bus started with the app ----------------------------------------
 const info = await page.evaluate(() => window.termivin.busInfo());
 check('bus is listening', /^http:\/\/127\.0\.0\.1:\d+$/.test(info.url || ''), info);
-check('bus issued a token', typeof info.token === 'string' && info.token.length >= 32, info.token?.length);
+const sampleToken = await page.evaluate(() => window.termivin.busAgentToken('any'));
+check('bus issues per-terminal tokens', typeof sampleToken === 'string' && sampleToken.length >= 32 && !info.token, sampleToken?.length);
 
-const busCall = (agent, route, init = {}) =>
+const busCall = async (agent, route, init = {}) =>
   fetch(info.url + route, {
     ...init,
     headers: {
-      authorization: 'Bearer ' + info.token,
+      authorization: 'Bearer ' + (await page.evaluate((a) => window.termivin.busAgentToken(a), agent)),
       'x-termivin-agent': agent,
       ...(init.body ? { 'content-type': 'application/json' } : {}),
       ...(init.headers || {}),

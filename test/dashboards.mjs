@@ -64,11 +64,11 @@ await page.waitForTimeout(5000);
 
 // --- bus: register agents + topic + traffic (HTTP, like the CLI would) -----
 const bus = await page.evaluate(() => window.termivin.busInfo());
-const call = (agent, method, route, body) =>
+const call = async (agent, method, route, body) =>
   fetch(bus.url + route, {
     method,
     headers: {
-      authorization: 'Bearer ' + bus.token,
+      authorization: 'Bearer ' + (await page.evaluate((a) => window.termivin.busAgentToken(a), agent)),
       'x-termivin-agent': agent,
       ...(body ? { 'content-type': 'application/json' } : {}),
     },

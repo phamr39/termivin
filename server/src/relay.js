@@ -29,6 +29,11 @@ export const OP_SCOPES = {
   'term.rename': 'manage',
   'term.move': 'manage',
   'term.mode': 'manage',
+  'term.presets': 'view',
+  'chat.list': 'view',
+  'chat.history': 'view',
+  'chat.read': 'view',
+  'chat.send': 'input',
   // Answered by the relay itself.
   'relay.activity': 'view',
   'relay.audit': 'manage',
@@ -250,6 +255,16 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
           break;
         }
         if (msg.kind === 'activity') db.addActivity(hostId, msg.data?.kind || 'misc', msg.data);
+        // An agent writing to the owner is worth a notification.
+        if (msg.kind === 'chat' && msg.data?.msg?.notify && push) {
+          const m = msg.data.msg;
+          push.send(db.devicesForHost(hostId), {
+            title: m.fromName || 'Termivin',
+            body: String(m.text || '').slice(0, 180),
+            data: { hostId, conv: msg.data.conv, kind: 'chat' },
+            category: 'DEFAULT',
+          });
+        }
         broadcast(hostId, { t: 'event', hostId, kind: msg.kind, data: msg.data });
         break;
       }

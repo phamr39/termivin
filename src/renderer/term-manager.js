@@ -205,13 +205,17 @@ export function initPtyEvents() {
       data = data.replace(/\x1b\[3J/g, '');
     }
     rt.xterm.write(data);
-    rt.lastDataAt = Date.now();
-    if (rt.approval) {
-      rt.approval = null;
-      emit(termId);
-    }
+    const now = Date.now();
+    rt.lastDataAt = now;
+    // Re-check once output settles. A prompt stays flagged while it is still
+    // on screen (status-line redraws and echoes no longer make it flicker);
+    // the max-wait keeps a constantly redrawing spinner from starving it.
+    if (!rt.checkTimer) rt.checkDeadline = now + 2500;
     clearTimeout(rt.checkTimer);
-    rt.checkTimer = setTimeout(() => checkApproval(termId), 700);
+    rt.checkTimer = setTimeout(() => {
+      rt.checkTimer = null;
+      checkApproval(termId);
+    }, Math.max(0, Math.min(700, rt.checkDeadline - now)));
   });
 
   window.termivin.onPtyExit((termId, code) => {
@@ -231,11 +235,20 @@ function checkApproval(termId) {
   if (!rt || !rt.running || !rt.xterm) return;
   const lines = readTail(rt, 30);
   const found = detectApproval(lines);
-  if (found) {
-    rt.approval = found;
-    emit(termId);
-    maybeNotify(termId);
+  if (!found) {
+    rt.answeredHash = null;
+    if (rt.approval) {
+      rt.approval = null;
+      emit(termId);
+    }
+    return;
   }
+  // Just answered, and the CLI has not redrawn yet — not a new prompt.
+  if (found.hash === rt.answeredHash) return;
+  if (rt.approval && rt.approval.hash === found.hash) return; // unchanged
+  rt.approval = found;
+  emit(termId);
+  maybeNotify(termId);
 }
 
 function maybeNotify(termId) {
@@ -433,6 +446,7 @@ export function approve(termId, yes) {
   const rt = runtimes.get(termId);
   if (!rt || !rt.running || !rt.approval) return;
   window.termivin.ptyWrite(termId, approvalKeys(rt.approval.kind, yes));
+  rt.answeredHash = rt.approval.hash;
   rt.approval = null;
   emit(termId);
 }

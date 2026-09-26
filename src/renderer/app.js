@@ -3,6 +3,7 @@
 import * as S from './state.js';
 import * as TM from './term-manager.js';
 import * as UI from './ui.js';
+import { initRemoteCommands } from './remote-commands.js';
 
 import { applyThemeToDom } from './themes.js';
 
@@ -14,6 +15,7 @@ async function main() {
   window.__termivin = { S, TM };
 
   TM.initPtyEvents();
+  initRemoteCommands();
   TM.onStatusChange((termId) => UI.onTerminalStatusChanged(termId));
 
   const verEl = document.getElementById('app-version');

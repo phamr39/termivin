@@ -240,6 +240,7 @@ function connectPrompt(ws, self, peers) {
     '\'termivin send NAME "..."\' messages one agent — use @all to broadcast, add --ask for a question;',
     "'termivin recv --wait 60' blocks up to 60s waiting for messages;",
     '\'termivin topics\' lists cross-workspace topics — message one with: termivin send "#topic" "...".',
+    'To report to the human who owns this workspace (they may be on their phone): termivin send owner "...".',
     "Run 'termivin recv' whenever you finish a task or are about to wait on something —",
     'nothing pushes messages into your session, so unread mail sits there until you look.',
     'Do not reply to broadcasts unless the message asks you to.',
@@ -2199,8 +2200,167 @@ function renderThemeList() {
   }
 }
 
+// --- Settings → Remote (relay + phone pairing) ----------------------------
+
+let remoteInfo = { state: 'disabled' };
+let pairTtlTimer = null;
+
+const REMOTE_STATE_TEXT = {
+  online: 'Online — phones can reach this PC',
+  connecting: 'Connecting to the relay…',
+  offline: 'Relay unreachable — retrying',
+  error: 'Relay refused this PC',
+  disabled: 'Not connected',
+};
+
+function renderRemote() {
+  const info = remoteInfo || { state: 'disabled' };
+  const enrolled = !!info.hostId;
+  const stateCls = enrolled ? info.state : 'disabled';
+  for (const dot of document.querySelectorAll('#remote-status .remote-dot, #remote-tab-dot')) {
+    dot.className = 'remote-dot ' + stateCls;
+  }
+  $('#remote-status .remote-status-text').textContent = enrolled
+    ? (REMOTE_STATE_TEXT[info.state] || info.state) + (info.error ? ` (${info.error})` : '')
+    : 'Not set up';
+  $('#remote-setup').classList.toggle('hidden', enrolled);
+  $('#remote-manage').classList.toggle('hidden', !enrolled);
+  if (enrolled) {
+    $('#remote-url-view').textContent = info.url;
+    $('#remote-name-view').textContent = info.name || '';
+    $('#remote-enabled').checked = info.enabled;
+  }
+}
+
+async function refreshRemoteDevices() {
+  const box = $('#remote-devices');
+  if (!remoteInfo.hostId) return;
+  if (remoteInfo.state !== 'online') {
+    box.replaceChildren(el('div', 'settings-note', 'Connect to the relay to see paired phones.'));
+    return;
+  }
+  const res = await window.termivin.remoteDevices();
+  renderRemoteDevices(res.items || []);
+}
+
+function renderRemoteDevices(items) {
+  const box = $('#remote-devices');
+  if (!items.length) {
+    box.replaceChildren(el('div', 'settings-note', 'No phones paired yet.'));
+    return;
+  }
+  box.replaceChildren(...items.map((d) => {
+    const row = el('div', 'remote-device');
+    const dot = el('span', 'remote-dot' + (d.online ? ' online' : ''));
+    const seen = d.lastSeen ? new Date(d.lastSeen).toLocaleString() : 'never';
+    const revoke = el('button', 'btn btn-ghost btn-sm btn-danger-text', 'Revoke');
+    revoke.addEventListener('click', async () => {
+      if (!(await uiConfirm(`Revoke "${d.name}"? It is disconnected immediately and has to be paired again.`,
+        { title: 'Revoke phone', okLabel: 'Revoke', danger: true }))) return;
+      const res = await window.termivin.remoteRevoke(d.deviceId);
+      renderRemoteDevices(res.items || []);
+    });
+    row.append(dot, el('span', null, d.name), el('span', 'remote-device-meta', `${d.platform || ''} · ${(d.scopes || []).join(', ')} · seen ${seen}`), revoke);
+    return row;
+  }));
+}
+
+function setupRemoteSettings() {
+  if (!window.termivin.remoteStatus) return;
+  window.termivin.remoteStatus().then((info) => {
+    remoteInfo = info;
+    renderRemote();
+  });
+  window.termivin.onRemoteState((info) => {
+    const wasOnline = remoteInfo.state === 'online';
+    remoteInfo = info;
+    renderRemote();
+    if (info.state === 'online' && !wasOnline) refreshRemoteDevices();
+  });
+
+  $('#remote-connect').addEventListener('click', async () => {
+    const url = $('#remote-url').value.trim();
+    const code = $('#remote-code').value.trim();
+    const err = $('#remote-setup-error');
+    err.textContent = '';
+    if (!url || !code) {
+      err.textContent = 'Both the relay URL and the enrollment code are needed.';
+      return;
+    }
+    const btn = $('#remote-connect');
+    btn.disabled = true;
+    try {
+      const res = await window.termivin.remoteEnroll({ url, code });
+      if (!res.ok) err.textContent = res.error;
+      else {
+        remoteInfo = res.info;
+        $('#remote-code').value = '';
+        renderRemote();
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('#remote-enabled').addEventListener('change', async (e) => {
+    remoteInfo = await window.termivin.remoteEnable(e.target.checked);
+    renderRemote();
+  });
+
+  $('#remote-forget').addEventListener('click', async () => {
+    if (!(await uiConfirm('Disconnect and forget this relay? Paired phones stop reaching this PC; to come back you need a new enrollment code.',
+      { title: 'Forget relay', okLabel: 'Forget', danger: true }))) return;
+    remoteInfo = await window.termivin.remoteForget();
+    $('#remote-pair-box').classList.add('hidden');
+    renderRemote();
+  });
+
+  $('#remote-pair').addEventListener('click', async () => {
+    const err = $('#remote-pair-error');
+    err.textContent = '';
+    const res = await window.termivin.remotePair({ url: $('#remote-phone-url').value.trim() || undefined });
+    if (!res.ok) {
+      err.textContent = res.error;
+      return;
+    }
+    $('#remote-qr').src = res.qr;
+    $('#remote-pair-text').value = res.text;
+    $('#remote-pair-box').classList.remove('hidden');
+    clearInterval(pairTtlTimer);
+    const tick = () => {
+      const left = Math.max(0, res.expiresAt - Date.now());
+      $('#remote-pair-ttl').textContent = `${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')}`;
+      if (!left) {
+        clearInterval(pairTtlTimer);
+        $('#remote-pair-box').classList.add('hidden');
+      }
+    };
+    tick();
+    pairTtlTimer = setInterval(tick, 1000);
+    // A phone that pairs shows up in the list right away.
+    setTimeout(refreshRemoteDevices, 1500);
+  });
+
+  $('#remote-pair-copy').addEventListener('click', () => {
+    window.termivin.clipboardWrite($('#remote-pair-text').value);
+    const btn = $('#remote-pair-copy');
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy code'; }, 1500);
+  });
+}
+
+function showSettingsPane(name) {
+  for (const t of document.querySelectorAll('.settings-tab')) t.classList.toggle('active', t.dataset.pane === name);
+  for (const p of document.querySelectorAll('.settings-pane')) p.classList.toggle('hidden', p.dataset.pane !== name);
+  if (name === 'remote') refreshRemoteDevices();
+}
+
 function setupSettings() {
   const overlay = $('#settings-overlay');
+  setupRemoteSettings();
+  for (const t of document.querySelectorAll('.settings-tab')) {
+    t.addEventListener('click', () => showSettingsPane(t.dataset.pane));
+  }
   $('#settings-btn').addEventListener('click', () => {
     renderThemeList();
     overlay.classList.remove('hidden');
@@ -2208,6 +2368,8 @@ function setupSettings() {
   });
   const close = () => {
     overlay.classList.add('hidden');
+    clearInterval(pairTtlTimer);
+    $('#remote-pair-box').classList.add('hidden');
     syncExternalRects();
   };
   $('#settings-close').addEventListener('click', close);

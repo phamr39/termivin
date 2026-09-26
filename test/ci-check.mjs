@@ -37,6 +37,8 @@ const ESM = [
   'src/renderer/dashboard.js',
   'src/renderer/home.js',
   'src/renderer/themes.js',
+  'src/renderer/remote-commands.js',
+  'src/shared/approval.js',
 ];
 
 for (const f of CJS) {

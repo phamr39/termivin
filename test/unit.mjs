@@ -40,11 +40,14 @@ globalThis.window = {
 // The renderer modules are ES modules with a .js extension (the browser loads
 // them as modules); copy them to .mjs so every Node version treats them so.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'termivin-unit-'));
+fs.mkdirSync(path.join(tmp, 'renderer'));
 for (const f of ['state.js', 'presets.js']) {
-  fs.copyFileSync(path.join(root, 'src/renderer', f), path.join(tmp, f.replace('.js', '.mjs')));
+  const src = fs.readFileSync(path.join(root, 'src/renderer', f), 'utf8')
+    .replace("'../shared/approval.js'", JSON.stringify(pathToFileURL(path.join(root, 'src/shared/approval.js')).href));
+  fs.writeFileSync(path.join(tmp, 'renderer', f.replace('.js', '.mjs')), src);
 }
-const S = await import(pathToFileURL(path.join(tmp, 'state.mjs')).href);
-const P = await import(pathToFileURL(path.join(tmp, 'presets.mjs')).href);
+const S = await import(pathToFileURL(path.join(tmp, 'renderer', 'state.mjs')).href);
+const P = await import(pathToFileURL(path.join(tmp, 'renderer', 'presets.mjs')).href);
 
 // --- state.js ---------------------------------------------------------------
 
@@ -121,7 +124,7 @@ check('empty → none', P.detectApproval(['', '']) === null);
 
 // Claude's own numbered answer, sitting above its idle input box, is not a
 // permission prompt — approving it would press Enter into the input box.
-knownIssue('numbered plan in an answer is not an approval', P.detectApproval([
+check('numbered plan in an answer is not an approval', P.detectApproval([
   'Plan:',
   '1. Run the migration',
   '2. Update the tests',
@@ -130,6 +133,22 @@ knownIssue('numbered plan in an answer is not an approval', P.detectApproval([
   '│ >                            │',
   '╰──────────────────────────────╯',
 ]) === null);
+
+const menu = P.detectApproval(claudeMenu);
+check('menu exposes its options', menu.options.map((o) => o.key).join() === '1,2,3' && menu.options[0].label === 'Yes', menu.options);
+check('menu carries the question and what it is about', menu.question === 'Do you want to proceed?' && menu.excerpt.includes('npm test'), menu);
+const again = P.detectApproval([...claudeMenu]);
+check('same prompt → same hash', again.hash === menu.hash);
+const other = P.detectApproval(claudeMenu.map((l) => l.replace('npm test', 'rm -rf dist')));
+check('different command → different hash', other.hash !== menu.hash);
+check('optionKeys picks a menu option by number', P.optionKeys(menu, '2') === '2' && P.optionKeys(menu, '9') === null);
+check('optionKeys for y/n', P.optionKeys(P.detectApproval(['Continue? [y/N]']), 'n') === 'n\r');
+check('menu with a hint row below it',
+  P.detectApproval(['Do you want to make this edit to a.ts?', '❯ 1. Yes', '  2. No', '', 'Esc to cancel · Tab to amend'])?.kind === 'menu');
+check('menu whose first option is not a yes → none',
+  P.detectApproval(['Select a model:', '❯ 1. Opus', '  2. Sonnet']) === null);
+check('summarize skips prompts and chrome',
+  P.summarize(['Editing src/api/users.ts', '╭────╮', '│ >  │', '╰────╯', '? for shortcuts']) === 'Editing src/api/users.ts');
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(failures ? `\nUNIT: ${failures} FAILURE(S)` : `\nUNIT: ALL PASSED${known ? ` (${known} known issue)` : ''}`);
