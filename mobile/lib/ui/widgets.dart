@@ -14,6 +14,9 @@ class CharacterAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = TV.character(type);
+    // Telegram-style: a filled gradient disc, white glyph, and a small
+    // "online" dot while the terminal runs.
+    final running = status == 'idle' || status == 'working' || status == 'approval';
     return SizedBox(
       width: size,
       height: size,
@@ -23,50 +26,57 @@ class CharacterAvatar extends StatelessWidget {
           height: size,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: c.color.withValues(alpha: 0.16),
-            border: Border.all(color: c.color.withValues(alpha: 0.7), width: 1.4),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color.lerp(c.color, Colors.white, 0.18)!, c.color],
+            ),
           ),
           alignment: Alignment.center,
-          child: Text(c.glyph, style: TextStyle(color: c.color, fontSize: size * 0.4, fontWeight: FontWeight.w700)),
+          child: Text(c.glyph,
+              style: TextStyle(color: Colors.white, fontSize: size * 0.4, fontWeight: FontWeight.w700, height: 1.05)),
         ),
-        if (status != null)
+        if (running)
           Positioned(
-            right: -1,
-            bottom: -1,
-            child: StatusDot(status: status, size: size * 0.3, ring: true),
+            right: size * 0.01,
+            bottom: size * 0.01,
+            child: StatusDot(status: status, size: (size * 0.28).clamp(9, 16).toDouble(), ring: true),
           ),
       ]),
     );
   }
 }
 
+/// A workspace's avatar: its initials on a peer colour, like a Telegram group.
 class GroupAvatar extends StatelessWidget {
-  const GroupAvatar({super.key, required this.members, this.size = 40});
-  final List<Map<String, dynamic>> members;
+  const GroupAvatar({super.key, required this.name, this.size = 40});
+  final String name;
   final double size;
+
+  static String initials(String name) {
+    final words = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.isEmpty) return '#';
+    if (words.length == 1) return words.first.substring(0, words.first.length >= 2 ? 2 : 1).toUpperCase();
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final shown = members.take(3).toList();
-    if (shown.isEmpty) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: const BoxDecoration(shape: BoxShape.circle, color: TV.panel),
-        child: const Icon(Icons.groups_rounded, color: TV.dim, size: 20),
-      );
-    }
-    return SizedBox(
+    final color = TV.peerColor(name);
+    return Container(
       width: size,
       height: size,
-      child: Stack(children: [
-        for (var i = 0; i < shown.length; i++)
-          Positioned(
-            left: i * size * 0.26,
-            top: i.isOdd ? size * 0.3 : 0,
-            child: CharacterAvatar(type: shown[i]['type'] as String?, size: size * 0.62),
-          ),
-      ]),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color.lerp(color, Colors.white, 0.18)!, color],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Text(initials(name),
+          style: TextStyle(color: Colors.white, fontSize: size * 0.36, fontWeight: FontWeight.w700)),
     );
   }
 }

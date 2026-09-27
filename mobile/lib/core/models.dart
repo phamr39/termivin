@@ -38,10 +38,12 @@ class TermInfo {
     this.restoreCommand = '',
     this.pendingMail = 0,
     this.exitCode,
+    this.title,
   });
   final String id;
   final String name;
   final String type;
+  final String? title; // Claude Code session title
   final String status; // working | idle | approval | exited | saved | attached
   final String cwd;
   final String summary;
@@ -68,6 +70,7 @@ class TermInfo {
         restoreCommand: _s(j['restoreCommand']),
         pendingMail: _i(j['pendingMail']),
         exitCode: _as<int>(j['exitCode']),
+        title: _as<String>(j['title']),
       );
 }
 

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -8,20 +6,25 @@ import '../core/models.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
-MarkdownStyleSheet _md(BuildContext context, {Color color = TV.text}) {
+// Telegram-style chat pieces: bubbles with the time (and ✓✓) tucked inside,
+// grouped runs, service pills, and "bot" messages with an inline keyboard.
+
+MarkdownStyleSheet mdStyle(BuildContext context, {Color color = TV.text}) {
   final base = MarkdownStyleSheet.fromTheme(Theme.of(context));
   return base.copyWith(
-    p: TextStyle(color: color, height: 1.4, fontSize: 14.5),
+    p: TextStyle(color: color, height: 1.35, fontSize: 15.5),
     h1: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w700),
-    h2: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w700),
-    h3: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w700),
-    listBullet: TextStyle(color: color),
-    code: const TextStyle(fontFamily: 'monospace', fontSize: 12.5, backgroundColor: TV.bg, color: Color(0xFFE6C07B)),
-    codeblockDecoration: BoxDecoration(color: TV.bg, borderRadius: BorderRadius.circular(8), border: Border.all(color: TV.border)),
+    h2: TextStyle(color: color, fontSize: 16.5, fontWeight: FontWeight.w700),
+    h3: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w700),
+    strong: TextStyle(color: color, fontWeight: FontWeight.w700),
+    listBullet: TextStyle(color: color, fontSize: 15.5),
+    code: const TextStyle(fontFamily: 'monospace', fontSize: 13, color: Color(0xFFE6C07B), backgroundColor: Colors.transparent),
+    codeblockDecoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(8)),
     codeblockPadding: const EdgeInsets.all(10),
-    blockquoteDecoration: BoxDecoration(border: const Border(left: BorderSide(color: TV.faint, width: 3)), color: TV.panel),
-    tableBorder: TableBorder.all(color: TV.border),
-    a: const TextStyle(color: TV.accent),
+    blockquoteDecoration: const BoxDecoration(border: Border(left: BorderSide(color: TV.link, width: 3))),
+    blockquotePadding: const EdgeInsets.only(left: 10),
+    tableBorder: TableBorder.all(color: TV.faint.withValues(alpha: 0.5)),
+    a: const TextStyle(color: TV.link),
   );
 }
 
@@ -34,12 +37,247 @@ String duration(num? ms) {
   return '${m ~/ 60}h ${m % 60}m';
 }
 
-/// One finished turn of an agent's work: a headline, what it did, and the
-/// full reply / step list on demand.
-class SummaryBubble extends StatefulWidget {
-  const SummaryBubble({super.key, required this.msg, this.type});
+/// Where a bubble sits in a run of messages from the same sender.
+class RunPos {
+  const RunPos({required this.first, required this.last});
+  final bool first; // oldest of the run: show the sender name
+  final bool last; // newest of the run: tail + avatar
+}
+
+/// Bubble shell: colour, corner shape with a tail on the last of a run,
+/// optional avatar (groups) and an inline keyboard underneath.
+class BubbleFrame extends StatelessWidget {
+  const BubbleFrame({
+    super.key,
+    required this.out,
+    required this.pos,
+    required this.child,
+    this.avatar,
+    this.showAvatarSlot = false,
+    this.keyboard,
+    this.onLongPress,
+    this.maxWidthFactor = 0.8,
+  });
+  final bool out;
+  final RunPos pos;
+  final Widget child;
+  final Widget? avatar;
+  final bool showAvatarSlot;
+  final Widget? keyboard;
+  final VoidCallback? onLongPress;
+  final double maxWidthFactor;
+
+  @override
+  Widget build(BuildContext context) {
+    const r = Radius.circular(16);
+    const small = Radius.circular(5);
+    final shape = BorderRadius.only(
+      topLeft: out ? r : (pos.first ? r : small),
+      bottomLeft: out ? r : (pos.last ? small : small),
+      topRight: out ? (pos.first ? r : small) : r,
+      bottomRight: out ? (pos.last ? small : small) : r,
+    );
+    final maxW = MediaQuery.of(context).size.width * maxWidthFactor;
+    final bubble = Column(crossAxisAlignment: out ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
+      GestureDetector(
+        onLongPress: onLongPress,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxW),
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          decoration: BoxDecoration(color: out ? TV.bubbleOut : TV.bubbleIn, borderRadius: shape),
+          child: child,
+        ),
+      ),
+      if (keyboard != null) ConstrainedBox(constraints: BoxConstraints(maxWidth: maxW), child: keyboard!),
+    ]);
+    return Padding(
+      padding: EdgeInsets.only(top: pos.first ? 6 : 1.5, bottom: 1.5),
+      child: Row(
+        mainAxisAlignment: out ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!out && showAvatarSlot) ...[
+            SizedBox(width: 34, child: pos.last ? avatar : null),
+            const SizedBox(width: 6),
+          ],
+          Flexible(child: bubble),
+          if (out) const SizedBox(width: 2),
+        ],
+      ),
+    );
+  }
+}
+
+/// "12:54 ✓✓" in the bubble's corner.
+class BubbleTime extends StatelessWidget {
+  const BubbleTime({super.key, required this.ts, this.out = false, this.state});
+  final int ts;
+  final bool out;
+  final String? state;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = out ? const Color(0xFF7DA8D3) : TV.dim;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Text(clock(ts), style: TextStyle(fontSize: 11.5, color: color)),
+      if (out && state != null) ...[
+        const SizedBox(width: 3),
+        Icon(state == 'queued' ? Icons.schedule_rounded : Icons.done_all_rounded, size: 15, color: const Color(0xFF7DB8F0)),
+      ],
+    ]);
+  }
+}
+
+/// Text and the time on one line when they fit, time wrapping under otherwise.
+class _TextWithTime extends StatelessWidget {
+  const _TextWithTime({required this.text, required this.time});
+  final Widget text;
+  final Widget time;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.end,
+        spacing: 8,
+        children: [text, Padding(padding: const EdgeInsets.only(top: 3), child: time)],
+      );
+}
+
+class SenderName extends StatelessWidget {
+  const SenderName({super.key, required this.name, required this.color, this.suffix});
+  final String name;
+  final Color color;
+  final String? suffix;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Text.rich(TextSpan(children: [
+          TextSpan(text: name, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 14.5)),
+          if (suffix != null) TextSpan(text: '  $suffix', style: const TextStyle(color: TV.dim, fontSize: 12.5)),
+        ])),
+      );
+}
+
+/// Ordinary message: owner (out), agent mail / bus traffic / desktop prompt (in).
+class TextBubble extends StatelessWidget {
+  const TextBubble({super.key, required this.msg, required this.pos, required this.group, this.type, this.onLongPress});
   final ChatMessage msg;
+  final RunPos pos;
+  final bool group;
   final String? type;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = msg;
+    final out = m.mine || m.role == 'desktop';
+    final senderColor = TV.character(type).color;
+    final suffix = [
+      if (m.kind == 'bus' && m.toName != null) '→ ${m.toName}',
+      if (m.topic != null) '#${m.topic}',
+      if (m.via == 'bus' && !m.mine) 'via bus',
+    ].join(' ');
+    final time = BubbleTime(ts: m.ts, out: out, state: m.mine ? m.state : null);
+    return BubbleFrame(
+      out: out,
+      pos: pos,
+      showAvatarSlot: group && !out,
+      avatar: CharacterAvatar(type: type, size: 34),
+      onLongPress: onLongPress,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        if (m.role == 'desktop' && pos.first) const SenderName(name: 'You', color: Color(0xFF9CC6EE), suffix: 'on the PC'),
+        if (!out && pos.first && (group || suffix.isNotEmpty) && m.fromName != null)
+          SenderName(name: m.fromName!, color: senderColor, suffix: suffix.isEmpty ? null : suffix),
+        if (m.subject.isNotEmpty) Text(m.subject, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+        if (out)
+          _TextWithTime(
+            text: Text(m.text, style: const TextStyle(fontSize: 15.5, height: 1.3, color: Colors.white)),
+            time: time,
+          )
+        else ...[
+          MarkdownBody(data: m.text, styleSheet: mdStyle(context)),
+          Align(alignment: Alignment.centerRight, child: time),
+        ],
+        if (m.state == 'queued')
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Text('waiting until it is idle', style: TextStyle(fontSize: 11.5, color: Color(0xFF9CC6EE))),
+          ),
+      ]),
+    );
+  }
+}
+
+/// Inline keyboard row (Telegram bot buttons).
+class InlineKeyboard extends StatelessWidget {
+  const InlineKeyboard({super.key, required this.rows});
+  final List<List<Widget>> rows;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          for (final row in rows)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Row(children: [
+                for (var i = 0; i < row.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 3),
+                  Expanded(child: row[i]),
+                ],
+              ]),
+            ),
+        ]),
+      );
+}
+
+class InlineButton extends StatelessWidget {
+  const InlineButton({super.key, required this.label, this.onTap, this.icon, this.color, this.busy = false});
+  final String label;
+  final VoidCallback? onTap;
+  final IconData? icon;
+  final Color? color;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = onTap == null ? TV.faint : (color ?? Colors.white);
+    return Material(
+      color: TV.inlineButton.withValues(alpha: 0.9),
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: busy ? null : onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 38),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          alignment: Alignment.center,
+          child: busy
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (icon != null) ...[Icon(icon, size: 16, color: fg), const SizedBox(width: 5)],
+                  Flexible(
+                    child: Text(label,
+                        maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: fg, fontSize: 14, fontWeight: FontWeight.w500)),
+                  ),
+                ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// A finished turn: "✓ Done · 9s", the headline, and inline buttons for the
+/// full reply and the step list.
+class SummaryBubble extends StatefulWidget {
+  const SummaryBubble({super.key, required this.msg, required this.pos, required this.group, this.type, this.onOpenTerminal});
+  final ChatMessage msg;
+  final RunPos pos;
+  final bool group;
+  final String? type;
+  final VoidCallback? onOpenTerminal;
 
   @override
   State<SummaryBubble> createState() => _SummaryBubbleState();
@@ -49,332 +287,260 @@ class _SummaryBubbleState extends State<SummaryBubble> {
   bool _full = false;
   bool _steps = false;
 
-  @override
-  Widget build(BuildContext context) {
-    final m = widget.msg;
-    final c = TV.character(widget.type);
-    final st = m.stats;
-    final chips = <(IconData, String)>[
-      if ((st['edit'] ?? 0) > 0) (Icons.edit_outlined, '${st['edit']} edit${st['edit'] == 1 ? '' : 's'}'),
-      if ((st['command'] ?? 0) > 0) (Icons.play_arrow_rounded, '${st['command']} command${st['command'] == 1 ? '' : 's'}'),
-      if ((st['read'] ?? 0) > 0) (Icons.search_rounded, '${st['read']} read${st['read'] == 1 ? '' : 's'}'),
-      if (st['durationMs'] != null) (Icons.timer_outlined, duration(st['durationMs'] as num?)),
-    ];
-    final longReply = m.text.trim() != m.headline.trim() && m.text.length > m.headline.length + 20;
-    final statusColor = m.interrupted || st['exited'] == true ? TV.orange : TV.green;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        CharacterAvatar(type: widget.type, size: 28),
-        const SizedBox(width: 8),
-        Flexible(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.84),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 9, 12, 7),
-              decoration: BoxDecoration(
-                color: TV.raised,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(14), topRight: Radius.circular(14),
-                  bottomLeft: Radius.circular(4), bottomRight: Radius.circular(14),
-                ),
-                border: Border.all(color: c.color.withValues(alpha: 0.35)),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Icon(m.interrupted ? Icons.pause_circle_outline_rounded : Icons.check_circle_rounded, size: 15, color: statusColor),
-                  const SizedBox(width: 5),
-                  Text(m.interrupted ? 'Stopped' : (st['exited'] == true ? 'Exited' : 'Done'),
-                      style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w700)),
-                  if (m.prompt.isNotEmpty) ...[
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text('· ${m.prompt.replaceAll('\n', ' ')}',
-                          maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: TV.faint, fontSize: 12)),
-                    ),
-                  ],
-                ]),
-                const SizedBox(height: 6),
-                if (m.mono)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: TV.bg, borderRadius: BorderRadius.circular(8)),
-                    child: SelectableText(
-                      _full ? m.text : _tail(m.text, 6),
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.35),
-                    ),
-                  )
-                else if (_full)
-                  MarkdownBody(data: m.text, selectable: true, styleSheet: _md(context))
-                else
-                  Text(m.headline.isNotEmpty ? m.headline : m.text,
-                      style: const TextStyle(fontSize: 14.5, height: 1.4, fontWeight: FontWeight.w500)),
-                if (chips.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 10, runSpacing: 4, children: [
-                    for (final (icon, label) in chips)
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(icon, size: 13, color: TV.dim),
-                        const SizedBox(width: 3),
-                        Text(label, style: const TextStyle(color: TV.dim, fontSize: 12)),
-                      ]),
-                  ]),
-                ],
-                if (_steps && m.steps.isNotEmpty)
-                  Container(
-                    margin: const EdgeInsets.only(top: 8),
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: TV.bg, borderRadius: BorderRadius.circular(8)),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      for (final s in m.steps)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 1.5),
-                          child: Text(s, maxLines: 2, overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5, color: TV.dim)),
-                        ),
-                    ]),
-                  ),
-                Row(children: [
-                  if (longReply || (m.mono && m.text.split('\n').length > 6))
-                    _Link(label: _full ? 'Less' : (m.mono ? 'Full output' : 'Full reply'), onTap: () => setState(() => _full = !_full)),
-                  if (m.steps.isNotEmpty)
-                    _Link(label: _steps ? 'Hide steps' : '${m.steps.length} step${m.steps.length == 1 ? '' : 's'}',
-                        onTap: () => setState(() => _steps = !_steps)),
-                  const Spacer(),
-                  InkWell(
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: m.text));
-                      toast(context, 'Copied');
-                    },
-                    child: const Padding(padding: EdgeInsets.all(4), child: Icon(Icons.copy_rounded, size: 14, color: TV.faint)),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(clock(m.ts), style: const TextStyle(fontSize: 10.5, color: TV.faint)),
-                ]),
-              ]),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
   static String _tail(String text, int n) {
     final lines = text.split('\n');
     return lines.length <= n ? text : lines.sublist(lines.length - n).join('\n');
   }
-}
-
-class _Link extends StatelessWidget {
-  const _Link({required this.label, required this.onTap});
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(0, 6, 14, 2),
-          child: Text(label, style: const TextStyle(color: TV.accent, fontSize: 12.5, fontWeight: FontWeight.w600)),
-        ),
-      );
-}
-
-/// "TermiPearl is working · 4 steps · ▶ npm test" — live, replaced by the
-/// summary when the turn ends.
-class ProgressBubble extends StatefulWidget {
-  const ProgressBubble({super.key, required this.progress, required this.name, this.type});
-  final TurnProgress progress;
-  final String name;
-  final String? type;
-
-  @override
-  State<ProgressBubble> createState() => _ProgressBubbleState();
-}
-
-class _ProgressBubbleState extends State<ProgressBubble> {
-  Timer? _tick;
-
-  @override
-  void initState() {
-    super.initState();
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _tick?.cancel();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.progress;
-    final since = p.startedAt == null ? null : DateTime.now().millisecondsSinceEpoch - p.startedAt!;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        CharacterAvatar(type: widget.type, status: 'working', size: 28),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-            decoration: BoxDecoration(
-              color: TV.accent.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: TV.accent.withValues(alpha: 0.35)),
+    final m = widget.msg;
+    final st = m.stats;
+    final stopped = m.interrupted || st['exited'] == true;
+    final facts = [
+      if ((st['edit'] ?? 0) > 0) '✎ ${st['edit']}',
+      if ((st['command'] ?? 0) > 0) '▶ ${st['command']}',
+      if ((st['read'] ?? 0) > 0) '🔎 ${st['read']}',
+      if (st['durationMs'] != null) duration(st['durationMs'] as num?),
+    ].join('  ·  ');
+    final longReply = m.text.trim() != m.headline.trim() && m.text.length > m.headline.length + 20;
+    final moreOutput = m.mono && m.text.split('\n').length > 8;
+
+    final buttons = <Widget>[
+      if (longReply || moreOutput)
+        InlineButton(
+          label: _full ? 'Show less' : (m.mono ? 'Full output' : 'Full reply'),
+          icon: _full ? Icons.unfold_less_rounded : Icons.article_outlined,
+          onTap: () => setState(() => _full = !_full),
+        ),
+      if (m.steps.isNotEmpty)
+        InlineButton(
+          label: _steps ? 'Hide steps' : 'Steps (${m.steps.length})',
+          icon: Icons.list_alt_rounded,
+          onTap: () => setState(() => _steps = !_steps),
+        ),
+      if (widget.onOpenTerminal != null)
+        InlineButton(label: 'Terminal', icon: Icons.terminal_rounded, onTap: widget.onOpenTerminal),
+    ];
+
+    return BubbleFrame(
+      out: false,
+      pos: widget.pos,
+      showAvatarSlot: widget.group,
+      avatar: CharacterAvatar(type: widget.type, size: 34),
+      maxWidthFactor: 0.86,
+      onLongPress: () {
+        Clipboard.setData(ClipboardData(text: m.text));
+        toast(context, 'Copied');
+      },
+      keyboard: buttons.isEmpty ? null : InlineKeyboard(rows: [buttons]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        if (widget.group && widget.pos.first && m.fromName != null)
+          SenderName(name: m.fromName!, color: TV.character(widget.type).color),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(stopped ? Icons.pause_circle_filled_rounded : Icons.check_circle_rounded, size: 16, color: stopped ? TV.orange : TV.green),
+          const SizedBox(width: 5),
+          Text(m.interrupted ? 'Stopped' : (st['exited'] == true ? 'Exited' : 'Done'),
+              style: TextStyle(color: stopped ? TV.orange : TV.green, fontWeight: FontWeight.w700, fontSize: 13.5)),
+          if (facts.isNotEmpty)
+            Flexible(
+              child: Text('  ·  $facts', maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: TV.dim, fontSize: 12.5)),
             ),
+        ]),
+        if (m.prompt.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 5),
+            padding: const EdgeInsets.only(left: 8),
+            decoration: const BoxDecoration(border: Border(left: BorderSide(color: TV.link, width: 2.5))),
+            child: Text(m.prompt.replaceAll('\n', ' '),
+                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: TV.dim, fontSize: 13)),
+          ),
+        const SizedBox(height: 6),
+        if (m.mono)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(8)),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SelectableText(_full ? m.text : _tail(m.text, 8),
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.35)),
+            ),
+          )
+        else if (_full)
+          MarkdownBody(data: m.text, selectable: true, styleSheet: mdStyle(context))
+        else
+          Text(m.headline.isNotEmpty ? m.headline : m.text, style: const TextStyle(fontSize: 15.5, height: 1.35)),
+        if (_steps && m.steps.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(8)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.8, color: TV.accent)),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    '${widget.name} is working${p.steps > 0 ? ' · ${p.steps} step${p.steps == 1 ? '' : 's'}' : ''}${since != null ? ' · ${duration(since)}' : ''}',
-                    style: const TextStyle(color: TV.accent, fontSize: 12.5, fontWeight: FontWeight.w600),
-                  ),
+              for (final s in m.steps)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1.5),
+                  child: Text(s, maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5, color: TV.dim)),
                 ),
-              ]),
-              if (p.last.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(p.last, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: TV.dim)),
-              ],
             ]),
           ),
-        ),
+        Align(alignment: Alignment.centerRight, child: BubbleTime(ts: m.ts)),
       ]),
     );
   }
 }
 
-/// Plain chat bubble (owner, agent-to-owner mail, bus traffic, desktop prompts).
-class TextBubble extends StatelessWidget {
-  const TextBubble({super.key, required this.msg, required this.showName, this.type});
-  final ChatMessage msg;
-  final bool showName;
+/// A prompt waiting on the owner, shown as a bot message with its options
+/// as inline buttons — answering goes through the same verified path as the
+/// inbox (the PC checks the prompt is still on screen).
+class AttentionBubble extends StatelessWidget {
+  const AttentionBubble({
+    super.key,
+    required this.item,
+    required this.onOption,
+    required this.onAction,
+    this.type,
+    this.enabled = true,
+    this.busyKey,
+  });
+  final AttentionItem item;
+  final void Function(PromptOption) onOption;
+  final void Function(String op) onAction; // 'bus.push' | 'term.restore'
   final String? type;
+  final bool enabled;
+  final String? busyKey;
+
+  static final _yes = RegExp(r'^(yes|approve|allow|proceed|accept|run|always|continue|trust|confirm)\b', caseSensitive: false);
+  static final _no = RegExp(r'^(no|deny|reject|cancel|exit)\b', caseSensitive: false);
 
   @override
   Widget build(BuildContext context) {
-    final m = msg;
-    if (m.kind == 'system' || m.role == 'system') {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: TV.panel, borderRadius: BorderRadius.circular(10)),
-            child: Text('${m.text} · ${clock(m.ts)}', style: const TextStyle(color: TV.dim, fontSize: 12)),
-          ),
-        ),
-      );
+    final i = item;
+    List<List<Widget>> rows;
+    if (i.kind == 'approval') {
+      final opts = i.options;
+      final short = opts.length <= 2 && opts.every((o) => o.label.length < 14);
+      Widget b(PromptOption o) => InlineButton(
+            label: o.label,
+            busy: busyKey == o.key,
+            color: _yes.hasMatch(o.label) ? const Color(0xFF8FE08E) : _no.hasMatch(o.label) ? const Color(0xFFFF8A80) : null,
+            onTap: enabled ? () => onOption(o) : null,
+          );
+      rows = short ? [opts.map(b).toList()] : [for (final o in opts) [b(o)]];
+    } else if (i.kind == 'ask') {
+      rows = [[InlineButton(label: 'Nudge to read mail', icon: Icons.mark_email_unread_outlined, busy: busyKey == 'push', onTap: enabled ? () => onAction('bus.push') : null)]];
+    } else {
+      rows = [[InlineButton(label: 'Resume session', icon: Icons.replay_rounded, busy: busyKey == 'restore', onTap: enabled ? () => onAction('term.restore') : null)]];
     }
-    if (m.kind == 'tool') {
-      // Older history, before turns were summarized.
-      return Padding(
-        padding: const EdgeInsets.only(left: 38, top: 1, bottom: 1, right: 40),
-        child: Text(m.text, maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5, color: TV.faint)),
-      );
-    }
-    final mine = m.mine;
-    final desktop = m.role == 'desktop';
-    final right = mine || desktop;
-    final bg = mine ? TV.accent.withValues(alpha: 0.9) : desktop ? TV.border : TV.raised;
-    final header = [
-      if (showName && m.fromName != null) m.fromName!,
-      if (m.kind == 'bus' && m.toName != null) '→ ${m.toName}',
-      if (m.topic != null) '#${m.topic}',
-      if (desktop) 'typed on the PC',
-      if (m.via == 'bus' && !mine) 'via bus',
-    ].join('  ');
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: right ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!right) ...[
-            CharacterAvatar(type: type, size: 28),
-            const SizedBox(width: 8),
-          ],
-          Flexible(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(11, 8, 11, 6),
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(14),
-                    topRight: const Radius.circular(14),
-                    bottomLeft: Radius.circular(right ? 14 : 4),
-                    bottomRight: Radius.circular(right ? 4 : 14),
-                  ),
-                  border: right ? null : Border.all(color: TV.border),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  if (header.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 3),
-                      child: Text(header,
-                          style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
-                              color: mine ? Colors.white70 : TV.character(type).color)),
-                    ),
-                  if (m.subject.isNotEmpty) Text(m.subject, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  if (right)
-                    SelectableText(m.text, style: TextStyle(color: mine ? Colors.white : TV.text, height: 1.35))
-                  else
-                    MarkdownBody(data: m.text, selectable: true, styleSheet: _md(context)),
-                  const SizedBox(height: 3),
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text(clock(m.ts), style: TextStyle(fontSize: 10.5, color: mine ? Colors.white60 : TV.faint)),
-                    if (mine && m.state != null) ...[
-                      const SizedBox(width: 4),
-                      Icon(m.state == 'queued' ? Icons.schedule_rounded : Icons.done_all_rounded, size: 13, color: Colors.white70),
-                      if (m.state == 'queued')
-                        const Text(' waiting for idle', style: TextStyle(fontSize: 10.5, color: Colors.white70)),
-                    ],
-                  ]),
-                ]),
-              ),
-            ),
+    final title = switch (i.kind) {
+      'approval' => 'Needs your approval',
+      'ask' => 'Waiting for a reply',
+      _ => 'Stopped unexpectedly',
+    };
+    return BubbleFrame(
+      out: false,
+      pos: const RunPos(first: true, last: true),
+      maxWidthFactor: 0.9,
+      keyboard: InlineKeyboard(rows: rows),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(i.kind == 'approval' ? Icons.front_hand_rounded : i.kind == 'ask' ? Icons.mark_email_unread_rounded : Icons.error_rounded,
+              size: 16, color: TV.orange),
+          const SizedBox(width: 6),
+          Text(title, style: const TextStyle(color: TV.orange, fontWeight: FontWeight.w700, fontSize: 14)),
+        ]),
+        const SizedBox(height: 5),
+        if (i.question.isNotEmpty) Text(i.question, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w500, height: 1.3)),
+        if (i.excerpt.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(8)),
+            child: Text(i.excerpt, style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5, height: 1.35)),
           ),
         ],
-      ),
+        if (!enabled)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('PC offline or this phone lacks the scope', style: TextStyle(color: TV.faint, fontSize: 12)),
+          ),
+        Align(alignment: Alignment.centerRight, child: BubbleTime(ts: i.since ?? DateTime.now().millisecondsSinceEpoch)),
+      ]),
     );
   }
 }
 
-/// "Today", "Yesterday", "Mon 21/9" between messages of different days.
-class DaySeparator extends StatelessWidget {
-  const DaySeparator({super.key, required this.ts});
-  final int ts;
+/// Centered translucent pill — dates and service messages.
+class ServicePill extends StatelessWidget {
+  const ServicePill({super.key, required this.text});
+  final String text;
 
   @override
-  Widget build(BuildContext context) {
-    final d = DateTime.fromMillisecondsSinceEpoch(ts);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(d.year, d.month, d.day);
-    final diff = today.difference(day).inDays;
-    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final label = diff == 0 ? 'Today' : diff == 1 ? 'Yesterday' : '${names[d.weekday - 1]} ${d.day}/${d.month}';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(children: [
-        const Expanded(child: Divider()),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Text(label, style: const TextStyle(color: TV.faint, fontSize: 11.5, fontWeight: FontWeight.w600)),
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.28), borderRadius: BorderRadius.circular(14)),
+            child: Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+          ),
         ),
-        const Expanded(child: Divider()),
-      ]),
+      );
+}
+
+String dayLabel(int ts) {
+  final d = DateTime.fromMillisecondsSinceEpoch(ts);
+  final now = DateTime.now();
+  final diff = DateTime(now.year, now.month, now.day).difference(DateTime(d.year, d.month, d.day)).inDays;
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  if (diff == 0) return 'Today';
+  if (diff == 1) return 'Yesterday';
+  return d.year == now.year ? '${months[d.month - 1]} ${d.day}' : '${months[d.month - 1]} ${d.day}, ${d.year}';
+}
+
+/// The chat wallpaper: Telegram's dark blue with a faint doodle of Termivin
+/// glyphs.
+class ChatWallpaper extends StatelessWidget {
+  const ChatWallpaper({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(painter: _DoodlePainter(), child: child);
+}
+
+class _DoodlePainter extends CustomPainter {
+  static const _glyphs = ['✳', '›_', '◆', '⚙', '{ }', '#', '✓', '⌘'];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0E1621), Color(0xFF111D2B), Color(0xFF0E1621)],
+        ).createShader(Offset.zero & size),
     );
+    const step = 74.0;
+    var k = 0;
+    for (double y = 18; y < size.height; y += step) {
+      for (double x = (y ~/ step).isOdd ? 40 : 6; x < size.width; x += step) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: _glyphs[k++ % _glyphs.length],
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.035), fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(x, y));
+      }
+    }
   }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

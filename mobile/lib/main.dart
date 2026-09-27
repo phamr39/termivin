@@ -4,7 +4,7 @@ import 'core/chat_model.dart';
 import 'core/client.dart';
 import 'ui/pair_screen.dart';
 import 'ui/scope.dart';
-import 'ui/shell.dart';
+import 'ui/home_screen.dart';
 import 'ui/theme.dart';
 
 void main() {
@@ -33,7 +33,7 @@ class TermivinApp extends StatelessWidget {
           listenable: client,
           builder: (context, _) => client.creds == null
               ? PairScreen(client: client)
-              : HomeShell(client: client, chats: chats),
+              : HomeScreen(client: client, chats: chats),
         ),
       ),
     );
