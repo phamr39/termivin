@@ -49,6 +49,8 @@ termivin recv --wait 60                            # read mail (blocks up to 60 
 termivin topics                                    # list cross-workspace topics
 termivin topic deploys --rep TermiFast             # create a topic in this workspace
 termivin send "#deploys" "shipping v2"             # message a topic
+termivin send owner "tests are green"                 # tell the human (their phone chat)
+termivin send owner --image shot.png "new login page" # show them a screenshot
 ```
 
 Any unrecognized options are forwarded straight to Electron.

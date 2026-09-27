@@ -28,7 +28,7 @@
     "prestart": "node src/mac-app-name.js",
     "start": "electron .",
     "start:debug": "electron . --remote-debugging-port=9222",
-    "test": "node test/ci-check.mjs && node test/unit.mjs && node test/hub.mjs && node test/turns.mjs && node test/bus.mjs",
+    "test": "node test/ci-check.mjs && node test/unit.mjs && node test/hub.mjs && node test/turns.mjs && node test/media.mjs && node test/bus.mjs",
     "test:remote": "node --disable-warning=ExperimentalWarning test/remote.mjs",
     "test:unit": "node test/unit.mjs",
     "test:e2e": "node test/smoke.mjs",

@@ -204,8 +204,14 @@ class ChatMessage {
   final bool mono; // plain terminal output rather than markdown
   final bool interrupted;
 
+  MediaInfo? media; // kind == image
+
   /// One line for list previews and notifications.
-  String get preview => kind == 'summary' ? '✓ ${headline.isNotEmpty ? headline : text}' : text;
+  String get preview => switch (kind) {
+        'summary' => '✓ ${headline.isNotEmpty ? headline : text}',
+        'image' => '📷 ${text.isNotEmpty ? text : 'Photo'}',
+        _ => text,
+      };
   final String? from;
   final String? fromName;
   final String? toName;
@@ -235,6 +241,28 @@ class ChatMessage {
         stats: _as<Map<String, dynamic>>(j['stats']) ?? const {},
         mono: j['mono'] == true,
         interrupted: j['interrupted'] == true,
+      )..media = j['media'] is Map<String, dynamic> ? MediaInfo.fromJson(j['media'] as Map<String, dynamic>) : null;
+}
+
+/// An image stored on the PC (fetched in chunks through the relay).
+class MediaInfo {
+  MediaInfo({required this.id, required this.mime, required this.size, this.width, this.height, this.name = ''});
+  final String id;
+  final String mime;
+  final int size;
+  final int? width;
+  final int? height;
+  final String name;
+
+  double get aspect => (width != null && height != null && width! > 0 && height! > 0) ? width! / height! : 16 / 10;
+
+  factory MediaInfo.fromJson(Map<String, dynamic> j) => MediaInfo(
+        id: _s(j['id']),
+        mime: _s(j['mime'], 'image/png'),
+        size: _i(j['size']),
+        width: _as<int>(j['width']),
+        height: _as<int>(j['height']),
+        name: _s(j['name']),
       );
 }
 

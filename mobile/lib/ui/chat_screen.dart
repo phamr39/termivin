@@ -385,6 +385,11 @@ class _ChatScreenState extends State<ChatScreen> {
           bubble = ServicePill(text: m.text);
         } else if (m.kind == 'tool') {
           bubble = ServicePill(text: m.text); // older history, before turns were summarized
+        } else if (m.kind == 'image') {
+          bubble = ImageBubble(
+            msg: m, pos: pos, group: isGroup, type: m.from == 'pc' ? null : type,
+            load: (id) => client.fetchMedia(widget.hostId, id),
+          );
         } else if (m.kind == 'summary') {
           bubble = SummaryBubble(msg: m, pos: pos, group: isGroup, type: type, onOpenTerminal: isGroup ? null : _openTerminal);
         } else {
@@ -433,12 +438,45 @@ class _ChatScreenState extends State<ChatScreen> {
         ('continue', 'Carry on where it stopped'),
         ('What is the status?', 'Ask for a progress update'),
         ('Summarize what you changed', 'A short recap of the work'),
+        ('Take a screenshot of the result and send it to me with: termivin send owner --image <file>',
+            'Ask for a screenshot to preview here'),
         ('Run the tests', 'Run the project\'s tests'),
         if (term?.type == 'claude') ...[
           ('/compact', 'Claude Code: compact the conversation'),
           ('/cost', 'Claude Code: show usage for this session'),
         ],
       ];
+
+  // 📎 — what can be put into this chat from here.
+  void _attachMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const CircleAvatar(backgroundColor: TV.accent, child: Icon(Icons.desktop_windows_rounded, color: Colors.white)),
+            title: const Text('Screenshot of the PC screen'),
+            subtitle: const Text('Captures the main display and posts it here'),
+            onTap: () async {
+              Navigator.pop(sheet);
+              await guarded(context, () => client.cmd(widget.hostId, 'screen.capture', {'conv': widget.conv.conv}));
+              _toBottom();
+            },
+          ),
+          if (!isGroup)
+            ListTile(
+              leading: const CircleAvatar(backgroundColor: TV.green, child: Icon(Icons.photo_camera_back_rounded, color: Colors.white)),
+              title: const Text('Ask the agent for a screenshot'),
+              subtitle: const Text('It captures its result and sends the image back'),
+              onTap: () {
+                Navigator.pop(sheet);
+                _send('Take a screenshot of the result and send it to me with: termivin send owner --image <file>');
+              },
+            ),
+        ]),
+      ),
+    );
+  }
 
   void _openMenu(TermInfo? term) {
     showModalBottomSheet(
@@ -468,6 +506,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final isShell = !isGroup && term != null && !term.isAgent;
     final agent = !isGroup && !isShell;
     final hasText = _input.text.trim().isNotEmpty;
+    final host = client.hosts[widget.hostId];
+    final canCapture = online && (host?.can('manage') ?? false);
     final hint = !online
         ? 'PC offline'
         : !canSend
@@ -481,6 +521,12 @@ class _ChatScreenState extends State<ChatScreen> {
       color: TV.panel,
       padding: EdgeInsets.fromLTRB(4, 4, 4, 4 + MediaQuery.of(context).padding.bottom),
       child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        if (canCapture)
+          IconButton(
+            tooltip: 'Attach',
+            onPressed: _attachMenu,
+            icon: Transform.rotate(angle: 0.6, child: const Icon(Icons.attach_file_rounded, color: TV.dim)),
+          ),
         if (agent && canSend)
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 6, right: 2),

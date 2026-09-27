@@ -8,6 +8,7 @@ const { HostLink } = require('./host-link');
 const { ChatStore } = require('./chat');
 const { TranscriptWatcher } = require('./transcripts');
 const { TurnTracker, screenSummary, headline } = require('./turns');
+const { MediaStore } = require('./media');
 
 const SNAPSHOT_DEBOUNCE_MS = 400;
 const TRANSCRIPT_POLL_MS = 2500;
@@ -28,10 +29,11 @@ const RENDERER_OPS = new Set([
   'term.restore', 'term.stop', 'term.restart', 'term.create', 'term.rename', 'term.mode',
 ]);
 
-function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects, platform, version, notifyRenderer }) {
+function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects, platform, version, notifyRenderer, encodeImage, captureScreen }) {
   const dir = path.join(userData, 'remote');
   const link = new HostLink(dir);
   const chat = new ChatStore(path.join(dir, 'chat'));
+  const media = new MediaStore(path.join(dir, 'media'), { encode: encodeImage });
   let appState = null; // last state the renderer saved
   const subs = new Set(); // termIds a phone is watching
   const pendingPrompts = new Map(); // termId -> [{ conv, id, text }]
@@ -274,10 +276,17 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
       });
     } else if (evt.type === 'owner' && evt.msg) {
       const m = evt.msg;
-      chat.add('dm:' + m.from, {
-        id: 'bus:' + m.mid, ts: m.ts, role: 'agent', kind: 'text', from: m.from, fromName: m.fromName,
-        subject: m.subject || '', text: m.body, via: 'bus', notify: true,
-      });
+      const base = { id: 'bus:' + m.mid, ts: m.ts, role: 'agent', from: m.from, fromName: m.fromName, subject: m.subject || '', via: 'bus', notify: true };
+      if (m.image) {
+        try {
+          const meta = media.ingestFile(m.image);
+          chat.add('dm:' + m.from, { ...base, kind: 'image', media: meta, text: m.body || '' });
+        } catch (err) {
+          chat.add('dm:' + m.from, { ...base, kind: 'text', text: `${m.body ? m.body + '\n\n' : ''}(could not attach ${path.basename(m.image)}: ${err.message})` });
+        }
+      } else {
+        chat.add('dm:' + m.from, { ...base, kind: 'text', text: m.body });
+      }
     }
     if (evt.type === 'msg' || evt.type === 'register' || evt.type === 'topic') pushSnapshot();
     if (evt.type === 'msg' || evt.type === 'read') pushAttention();
@@ -434,6 +443,21 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
         return {};
       case 'chat.send':
         return chatSend(args);
+      case 'media.get':
+        return media.read(String(args.id || ''), args.offset, args.length);
+      case 'screen.capture': {
+        if (!captureScreen) throw new Error('screen capture is not available');
+        const conv = String(args.conv || '');
+        if (!/^(dm|ws):/.test(conv)) throw new Error('unknown conversation');
+        const buf = await captureScreen();
+        const meta = media.ingestBuffer(buf, { name: 'screen.png' });
+        const id = 'img:' + meta.id;
+        chat.add(conv, {
+          id, kind: 'image', role: 'agent', from: 'pc', fromName: link.config ? link.config.name : 'PC',
+          media: meta, text: 'Screenshot of the PC screen',
+        });
+        return { id, media: meta };
+      }
       case 'term.presets':
         return { recentProjects: safe(() => recentProjects(), []), home: require('os').homedir() };
       default:
@@ -468,6 +492,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
     },
     onBusEvent,
     handleCmd, // exposed for tests
+    media,
     snapshot,
     attention,
   };

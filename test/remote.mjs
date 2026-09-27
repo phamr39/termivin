@@ -17,6 +17,7 @@ const { createRemote } = require('../src/remote/index.js');
 const { startServer } = await import(pathToFileURL(path.join(root, 'server/src/server.js')).href);
 const { loadConfig } = await import(pathToFileURL(path.join(root, 'server/src/config.js')).href);
 const WebSocket = createRequire(path.join(root, 'server/package.json'))('ws');
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
 let failures = 0;
 const check = (name, cond, detail) => {
@@ -63,6 +64,7 @@ remote = createRemote({
   recentProjects: () => ['/work/api'],
   platform: process.platform, version: 'test',
   notifyRenderer: () => {},
+  captureScreen: async () => PNG_1PX,
 });
 const state = {
   activeWorkspaceId: 'ws1',
@@ -205,6 +207,22 @@ const shellSummary = await until(() => inbox.find((m) => m.t === 'event' && m.ki
 check('the finished command posts one summary with its output', shellSummary && shellSummary.data.msg.text === '✓ 42 passing (3s)', shellSummary && shellSummary.data.msg);
 check('progress is cleared when it finishes', !!inbox.find((m) => m.t === 'event' && m.kind === 'progress' && m.data.termId === 't2' && !m.data.active));
 check('raw output is not posted as chat messages', inbox.filter((m) => m.t === 'event' && m.kind === 'chat' && m.data.conv === 'dm:t2' && m.data.msg.role === 'agent').length === 1);
+
+// an agent sends the owner a screenshot; the phone downloads it in chunks
+const shotFile = path.join(tmp, 'preview.png');
+fs.writeFileSync(shotFile, PNG_1PX);
+const shotSent = await fetch(bus.info().url + '/publish', {
+  method: 'POST',
+  headers: { authorization: 'Bearer ' + bus.agentToken('t1'), 'x-termivin-agent': 't1', 'content-type': 'application/json' },
+  body: JSON.stringify({ to: 'owner', body: 'here is the login page', image: shotFile }),
+}).then((r) => r.json());
+check('agent can send an image to the owner', shotSent.ok, shotSent);
+const imgMsg = await until(() => inbox.find((m) => m.t === 'event' && m.kind === 'chat' && m.data.msg.kind === 'image'));
+check('phone gets an image message with its caption', imgMsg && imgMsg.data.conv === 'dm:t1' && imgMsg.data.msg.text === 'here is the login page' && imgMsg.data.msg.media.mime === 'image/png', imgMsg && imgMsg.data.msg);
+const chunk = await cmd('media.get', { id: imgMsg.data.msg.media.id, offset: 0 });
+check('phone downloads the image over the relay', chunk.ok && Buffer.from(chunk.data.data, 'base64').equals(PNG_1PX) && chunk.data.done, chunk);
+const cap = await cmd('screen.capture', { conv: 'dm:t1' });
+check('owner can capture the PC screen into a chat', cap.ok && cap.data.media.mime === 'image/png', cap);
 
 // model changes go to the renderer
 const r = await cmd('term.restart', { termId: 't1' });

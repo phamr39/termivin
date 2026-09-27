@@ -473,6 +473,150 @@ class AttentionBubble extends StatelessWidget {
   }
 }
 
+/// A photo, Telegram-style: the image fills the bubble, the time sits on it
+/// (or under the caption); tap for the full-screen viewer.
+class ImageBubble extends StatefulWidget {
+  const ImageBubble({
+    super.key,
+    required this.msg,
+    required this.pos,
+    required this.group,
+    required this.load,
+    this.type,
+  });
+  final ChatMessage msg;
+  final RunPos pos;
+  final bool group;
+  final Future<Uint8List> Function(String id) load;
+  final String? type;
+
+  @override
+  State<ImageBubble> createState() => _ImageBubbleState();
+}
+
+class _ImageBubbleState extends State<ImageBubble> {
+  Future<Uint8List>? _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    final media = widget.msg.media;
+    if (media != null) _bytes = widget.load(media.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.msg;
+    final media = m.media;
+    final width = MediaQuery.of(context).size.width * 0.72;
+    final aspect = (media?.aspect ?? 1.6).clamp(0.5, 2.2);
+    final time = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(10)),
+      child: Text(clock(m.ts), style: const TextStyle(fontSize: 11.5, color: Colors.white)),
+    );
+    final picture = FutureBuilder<Uint8List>(
+      future: _bytes,
+      builder: (context, snap) {
+        if (snap.hasData) {
+          return GestureDetector(
+            onTap: () => Navigator.of(context).push(PageRouteBuilder(
+              opaque: false,
+              pageBuilder: (_, __, ___) => ImageViewer(bytes: snap.data!, title: m.fromName ?? '', subtitle: clock(m.ts), caption: m.text),
+              transitionsBuilder: (_, a, __, child) => FadeTransition(opacity: a, child: child),
+            )),
+            child: Hero(tag: 'img-${m.id}', child: Image.memory(snap.data!, fit: BoxFit.cover, gaplessPlayback: true)),
+          );
+        }
+        return Container(
+          color: Colors.black.withValues(alpha: 0.25),
+          alignment: Alignment.center,
+          child: snap.hasError
+              ? Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.broken_image_outlined, color: TV.dim),
+                  TextButton(
+                    onPressed: media == null ? null : () => setState(() => _bytes = widget.load(media.id)),
+                    child: const Text('Retry'),
+                  ),
+                ])
+              : const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2.4)),
+        );
+      },
+    );
+    return BubbleFrame(
+      out: false,
+      pos: widget.pos,
+      showAvatarSlot: widget.group,
+      avatar: CharacterAvatar(type: widget.type, size: 34),
+      maxWidthFactor: 0.76,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        if (widget.group && widget.pos.first && m.fromName != null)
+          SenderName(name: m.fromName!, color: TV.character(widget.type).color),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: width,
+            child: AspectRatio(
+              aspectRatio: aspect.toDouble(),
+              child: Stack(fit: StackFit.expand, children: [
+                picture,
+                if (m.text.isEmpty) Positioned(right: 6, bottom: 6, child: time),
+              ]),
+            ),
+          ),
+        ),
+        if (m.text.isNotEmpty) ...[
+          const SizedBox(height: 5),
+          _TextWithTime(text: Text(m.text, style: const TextStyle(fontSize: 15.5, height: 1.3)), time: BubbleTime(ts: m.ts)),
+        ],
+      ]),
+    );
+  }
+}
+
+/// Full-screen photo: pinch to zoom, drag down or tap × to close.
+class ImageViewer extends StatelessWidget {
+  const ImageViewer({super.key, required this.bytes, required this.title, required this.subtitle, this.caption = ''});
+  final Uint8List bytes;
+  final String title;
+  final String subtitle;
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black.withValues(alpha: 0.6),
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w600)),
+          Text(subtitle, style: const TextStyle(fontSize: 13, color: TV.dim)),
+        ]),
+      ),
+      body: Stack(children: [
+        Positioned.fill(
+          child: InteractiveViewer(
+            minScale: 1,
+            maxScale: 6,
+            child: Center(child: Image.memory(bytes, fit: BoxFit.contain)),
+          ),
+        ),
+        if (caption.isNotEmpty)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.6),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+              child: Text(caption, style: const TextStyle(fontSize: 15)),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
 /// Centered translucent pill — dates and service messages.
 class ServicePill extends StatelessWidget {
   const ServicePill({super.key, required this.text});

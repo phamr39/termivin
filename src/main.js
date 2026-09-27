@@ -775,10 +775,50 @@ function startRemote() {
     notifyRenderer: (channel, payload) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
     },
+    encodeImage: encodeImageForPhone,
+    captureScreen: capturePrimaryScreen,
   });
   const saved = readState();
   if (saved) remote.setState(saved);
   hub.ready.then(() => remote.start());
+}
+
+// Images for the phone chat: at most 1600 px on the long side. Small PNGs
+// (typical UI screenshots) stay PNG so text stays crisp; the rest becomes JPEG.
+const PHONE_IMAGE_MAX = 1600;
+function encodeImageForPhone(buffer, mime) {
+  const img = nativeImage.createFromBuffer(buffer);
+  if (img.isEmpty()) {
+    // A format nativeImage cannot decode (e.g. WebP on some platforms): pass it through.
+    return { buffer, mime, width: null, height: null };
+  }
+  let { width, height } = img.getSize();
+  let out = img;
+  if (Math.max(width, height) > PHONE_IMAGE_MAX) {
+    const scale = PHONE_IMAGE_MAX / Math.max(width, height);
+    out = img.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'good' });
+    ({ width, height } = out.getSize());
+  }
+  if (mime === 'image/png' && out === img && buffer.length < 1.5 * 1024 * 1024) {
+    return { buffer, mime, width, height };
+  }
+  return { buffer: out.toJPEG(85), mime: 'image/jpeg', width, height };
+}
+
+// A capture of the primary display, for "show me the PC screen" from the phone.
+async function capturePrimaryScreen() {
+  const { desktopCapturer } = require('electron');
+  const d = screen.getPrimaryDisplay();
+  const w = Math.round(d.size.width * d.scaleFactor);
+  const h = Math.round(d.size.height * d.scaleFactor);
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
+  const src = sources.find((s) => String(s.display_id) === String(d.id)) || sources[0];
+  if (!src || src.thumbnail.isEmpty()) {
+    throw new Error(process.platform === 'darwin'
+      ? 'screen capture is blocked — allow Termivin under System Settings → Privacy & Security → Screen Recording'
+      : 'screen capture failed');
+  }
+  return src.thumbnail.toPNG();
 }
 
 function pairingText(url, token) {

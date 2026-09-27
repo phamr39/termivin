@@ -155,13 +155,26 @@ async function send(argv) {
   }
   const [to, ...rest] = positional;
   const text = rest.join(' ');
-  if (!to || !text) {
-    console.error('Usage: termivin send <agent-name|@all|#topic> "message" [--ask] [--subject S]');
+  // --image: a picture for the human (e.g. a screenshot to preview on the phone)
+  const imageArg = flag(argv, 'image', null);
+  const image = imageArg ? path.resolve(process.cwd(), imageArg) : null;
+  if (image && !/^@?owner$/i.test(to || '')) {
+    console.error('Images can only be sent to the owner: termivin send owner --image <file> ["caption"]');
+    return 1;
+  }
+  if (image && !fs.existsSync(image)) {
+    console.error(`No such file: ${image}`);
+    return 1;
+  }
+  if (!to || (!text && !image)) {
+    console.error('Usage: termivin send <agent-name|@all|#topic|owner> "message" [--ask] [--subject S]\n' +
+      '       termivin send owner --image <file> ["caption"]');
     return 1;
   }
   const res = await request('POST', '/publish', {
     to,
     body: text,
+    image,
     kind: argv.includes('--ask') ? 'ask' : flag(argv, 'kind', 'note'),
     subject: flag(argv, 'subject', ''),
     corr: flag(argv, 'corr', null),

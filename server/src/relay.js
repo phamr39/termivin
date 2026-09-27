@@ -34,6 +34,8 @@ export const OP_SCOPES = {
   'chat.history': 'view',
   'chat.read': 'view',
   'chat.send': 'input',
+  'media.get': 'view',
+  'screen.capture': 'manage',
   // Answered by the relay itself.
   'relay.activity': 'view',
   'relay.audit': 'manage',

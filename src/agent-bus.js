@@ -331,7 +331,11 @@ function publishToOwner(me, body) {
     subject: body.subject ? stripControl(body.subject).slice(0, 200) : '',
     body: stripControl(body.body || '').slice(0, 20000),
     corr: body.corr || null,
+    // An image for the owner (`termivin send owner --image shot.png`): the
+    // path on this machine. The app reads, checks and downsizes it.
+    image: typeof body.image === 'string' && body.image.length < 1024 ? body.image : null,
   };
+  if (!msg.body.trim() && !msg.image) return { ok: false, error: 'empty message' };
   append(mine.space, { t: 'owner', msg });
   if (msg.corr) clearAsk(msg.corr);
   onEvent({ type: 'owner', msg });
@@ -600,7 +604,8 @@ async function handle(req, res) {
     const rawTo = String(body.to || '');
     const topicMatch = rawTo.match(/^#(.+)$/) || rawTo.match(/^topic:(.+)$/i);
     if (/^@?owner$/i.test(rawTo.trim())) {
-      return send(res, 200, publishToOwner(me, body));
+      const r = publishToOwner(me, body);
+      return send(res, r.ok ? 200 : 400, r);
     }
     if (topicMatch) {
       const topic = findTopicByName(topicMatch[1]);

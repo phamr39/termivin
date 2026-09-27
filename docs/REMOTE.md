@@ -215,7 +215,8 @@ and quick commands instead.
    it started. Other terminals (Codex, custom agents, shells): a prompt sent
    from the phone opens a turn, the terminal going idle closes it, and the
    summary is what it printed after the prompt, read from the rendered screen.
-2. Bus messages addressed to `owner`, `@all` or the group's topics.
+2. Images: `termivin send owner --image FILE "caption"` (checked by content, downsized, kept under <userData>/remote/media, fetched by the phone with `media.get` in 384 KB chunks) and 📎 → *Screenshot of the PC screen* (`screen.capture`, manage scope).
+3. Bus messages addressed to `owner`, `@all` or the group's topics.
 3. System cards: approval requests (inline Approve / Deny with the options
    read from screen), exits, restores — the same objects as the Inbox.
 

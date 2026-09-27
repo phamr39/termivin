@@ -243,6 +243,13 @@ check('CLI recv prints a message sent with a leading --ask', cliRecv.includes('f
 check('CLI recv prints the message', cliRecv.includes('ping from the CLI'), cliRecv);
 check('CLI recv flags a question', cliRecv.includes('needs a reply'), cliRecv);
 
+const imgPath = path.join(dir, 'shot.png');
+fs.writeFileSync(imgPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+const cliImg = await cli('t1', ['send', 'owner', '--image', imgPath, 'the new login page']);
+check('CLI sends an image to the owner', cliImg.includes('Sent to: Owner'), cliImg);
+const cliImgBad = await cli('t1', ['send', 'TermiEco', '--image', imgPath]);
+check('CLI refuses images for anyone but the owner', cliImgBad.includes('only be sent to the owner'), cliImgBad);
+
 const cliBad = await cli('t1', ['send', 'NoSuchAgent', 'hello']);
 check('CLI reports an unknown recipient', cliBad.includes('no such agent'), cliBad);
 

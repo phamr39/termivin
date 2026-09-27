@@ -31,6 +31,7 @@ const CJS = [
   'src/remote/chat.js',
   'src/remote/transcripts.js',
   'src/remote/turns.js',
+  'src/remote/media.js',
 ];
 const ESM = [
   'src/renderer/app.js',

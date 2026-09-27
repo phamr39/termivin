@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -427,6 +428,35 @@ class RelayClient extends ChangeNotifier {
       _pending.remove(id);
       throw CmdError('timeout');
     });
+  }
+
+  // Images from the PC, downloaded in chunks and kept for the session.
+  final Map<String, Uint8List> _media = {};
+  final Map<String, Future<Uint8List>> _mediaLoading = {};
+
+  Future<Uint8List> fetchMedia(String hostId, String id) {
+    final key = '$hostId/$id';
+    final cached = _media[key];
+    if (cached != null) return Future.value(cached);
+    return _mediaLoading[key] ??= () async {
+      try {
+        final parts = BytesBuilder(copy: false);
+        var offset = 0;
+        for (var i = 0; i < 200; i++) {
+          final r = await cmd(hostId, 'media.get', {'id': id, 'offset': offset});
+          final bytes = base64Decode(r['data'] as String);
+          parts.add(bytes);
+          offset += bytes.length;
+          if (r['done'] == true || bytes.isEmpty) break;
+        }
+        final data = parts.takeBytes();
+        _media[key] = data;
+        if (_media.length > 40) _media.remove(_media.keys.first);
+        return data;
+      } finally {
+        _mediaLoading.remove(key);
+      }
+    }();
   }
 
   void subscribe(String hostId, String termId) {
