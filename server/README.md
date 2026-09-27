@@ -130,9 +130,44 @@ docker compose up -d
 - Every command is in the audit log (free text input is logged as a length only).
 - Rate limits: 30 API calls/min per IP, ~20 commands/s per phone socket.
 
-## CI/CD with GitLab
+## Prebuilt images and deploy (GitHub Actions)
 
-`.gitlab-ci.yml` at the repository root:
+`.github/workflows/relay.yml` tests the relay and publishes a multi-arch
+(amd64 + arm64) image to GitHub Container Registry:
+
+| Trigger | Image tags |
+| --- | --- |
+| push to `master` touching `server/` | `sha-xxxxxxx`, `latest` |
+| tag `relay-v1.2.3` | `sha-xxxxxxx`, `1.2.3`, `1.2` |
+| pull request | built, not pushed |
+
+Run it on a server without building anything:
+
+```bash
+# in the folder with docker-compose.yml, deploy/Caddyfile and .env
+echo "RELAY_IMAGE=ghcr.io/phamr39/termivin-relay:latest" >> .env
+docker compose pull relay && docker compose up -d --no-build
+```
+
+The first image push creates the package as private: either make it public
+(GitHub → Packages → termivin-relay → Package settings) or `docker login ghcr.io`
+on the server with a token that has `read:packages`.
+
+**Deploy from GitHub:** Actions → *Relay* → *Run workflow* → tick *Deploy*.
+Create an environment `relay` (Settings → Environments — add required
+reviewers to approve each deploy) with secrets `DEPLOY_HOST` (`user@server`),
+`DEPLOY_PATH`, `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS` (`ssh-keyscan <server>`),
+optionally `DEPLOY_PROFILE=tls` and `GHCR_READ_TOKEN`. The job copies the compose
+file + Caddyfile, pins the image in the server's `.env` (`RELAY_IMAGE`), pulls,
+restarts and checks `/healthz`; the `.env` and the data volume are kept.
+
+The Android APKs come from `.github/workflows/mobile.yml` (tag `mobile-v1.2.3`
+→ GitHub Release with per-ABI APKs).
+
+### Alternative: GitLab CI
+
+`.gitlab-ci.yml` does the same on a GitLab runner (image to the GitLab
+registry, APKs, SSH deploy) if the repository is mirrored there.
 
 | Stage | Job | What |
 | --- | --- | --- |

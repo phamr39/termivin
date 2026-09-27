@@ -219,7 +219,8 @@ deploy:relay:
       cd '$DEPLOY_PATH'
       echo '$CI_DEPLOY_PASSWORD' | docker login -u '$CI_DEPLOY_USER' --password-stdin '$CI_REGISTRY' 2>/dev/null \
         || echo '$CI_REGISTRY_PASSWORD' | docker login -u '$CI_REGISTRY_USER' --password-stdin '$CI_REGISTRY'
-      export RELAY_IMAGE='$RELAY_IMAGE:$TAG'
+      touch .env
+      if grep -q '^RELAY_IMAGE=' .env; then sed -i "s|^RELAY_IMAGE=.*|RELAY_IMAGE=$RELAY_IMAGE:$TAG|" .env; else echo 'RELAY_IMAGE=$RELAY_IMAGE:$TAG' >> .env; fi
       docker compose ${DEPLOY_PROFILE:+--profile $DEPLOY_PROFILE} pull
       docker compose ${DEPLOY_PROFILE:+--profile $DEPLOY_PROFILE} up -d --no-build
       sleep 5
