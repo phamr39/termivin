@@ -82,8 +82,6 @@ class _FakeClient extends RelayClient {
         'last': {'id': 'x', 'ts': _ago(12), 'role': 'agent', 'kind': 'summary', 'headline': 'Signup form wired to the new API', 'text': ''}, 'unread': 1},
       {'conv': 'dm:t3', 'kind': 'dm', 'title': 'TermiEco', 'spaceId': 'w1', 'spaceName': 'Riverside', 'termId': 't3', 'type': 'codex', 'status': 'idle',
         'last': {'id': 'y', 'ts': _ago(28), 'role': 'agent', 'kind': 'text', 'text': 'Ping me when the form is done.'}, 'unread': 2},
-      {'conv': 'dm:t4', 'kind': 'dm', 'title': 'TermiUni', 'spaceId': 'w1', 'spaceName': 'Riverside', 'termId': 't4', 'type': 'shell', 'status': 'idle',
-        'last': {'id': 'z', 'ts': _ago(200), 'role': 'owner', 'kind': 'text', 'text': 'git status', 'state': 'delivered'}, 'unread': 0},
       {'conv': 'ws:w2', 'kind': 'group', 'title': 'Ocean Park', 'spaceId': 'w2', 'members': [<String, dynamic>{}], 'unread': 0},
       {'conv': 'dm:t5', 'kind': 'dm', 'title': 'TermiSafari', 'spaceId': 'w2', 'spaceName': 'Ocean Park', 'termId': 't5', 'type': 'claude', 'status': 'saved',
         'last': {'id': 'w', 'ts': _ago(60 * 26), 'role': 'agent', 'kind': 'summary', 'headline': 'Docs site rebuilt, 3 broken links fixed', 'text': ''}, 'unread': 0},

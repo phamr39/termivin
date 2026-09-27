@@ -39,10 +39,14 @@ class TermInfo {
     this.pendingMail = 0,
     this.exitCode,
     this.title,
+    this.agent = false,
   });
   final String id;
   final String name;
   final String type;
+  /// Runs an AI agent (Claude Code, Codex, another agent CLI, or registered on
+  /// the bus) — only these are chat characters.
+  final bool agent;
   final String? title; // Claude Code session title
   final String status; // working | idle | approval | exited | saved | attached
   final String cwd;
@@ -71,6 +75,7 @@ class TermInfo {
         pendingMail: _i(j['pendingMail']),
         exitCode: _as<int>(j['exitCode']),
         title: _as<String>(j['title']),
+        agent: j['agent'] == true || (j['agent'] == null && (j['type'] == 'claude' || j['type'] == 'codex')),
       );
 }
 

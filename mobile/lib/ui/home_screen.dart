@@ -78,8 +78,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final folders = <({String id, String label, int badge})>[
           (id: 'all', label: 'All', badge: widget.chats.totalUnread),
           (id: 'needs', label: 'Needs you', badge: needs),
+          // a folder per workspace that has someone to talk to
           for (final ws in snap?.workspaces ?? const <WorkspaceInfo>[])
-            (id: ws.id, label: ws.name, badge: widget.chats.convs.where((c) => c.spaceId == ws.id).fold(0, (n, c) => n + c.unread)),
+            if (widget.chats.convs.any((c) => c.spaceId == ws.id))
+              (id: ws.id, label: ws.name, badge: widget.chats.convs.where((c) => c.spaceId == ws.id).fold(0, (n, c) => n + c.unread)),
         ];
         if (!folders.any((f) => f.id == _folder)) _folder = 'all';
         final index = folders.indexWhere((f) => f.id == _folder);

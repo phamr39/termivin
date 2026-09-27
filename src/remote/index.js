@@ -60,6 +60,23 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
     return f ? { name: f.t.name, spaceId: f.ws.id, spaceName: f.ws.name, type: f.t.type } : null;
   }
 
+  // AI agent CLIs recognised by the command a terminal runs.
+  const AGENT_CLI = /^\s*(claude|codex|gemini|aider|opencode|cursor-agent|amp|qwen|goose|copilot|crush|kiro)(\.exe|\.cmd)?\b/i;
+
+  // An agent: Claude Code / Codex terminals, anything launching a known agent
+  // CLI, or a terminal that joined the bus itself (`termivin register`).
+  function isAgentTerminal(t, registered = busRegistered()) {
+    if (t.external) return false;
+    if (t.type === 'claude' || t.type === 'codex') return true;
+    if (AGENT_CLI.test(t.command || '') || AGENT_CLI.test(t.restoreCommand || '')) return true;
+    return registered.has(t.id);
+  }
+
+  function busRegistered() {
+    const stats = safe(() => bus.stats(), { agents: [] });
+    return new Set(stats.agents.filter((a) => a.registered).map((a) => a.id));
+  }
+
   function termStatus(t) {
     if (t.external) return 'attached';
     const s = hub.get(t.id);
@@ -70,6 +87,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
   function snapshot() {
     const busStats = safe(() => bus.stats(), { agents: [], topics: [], openAsks: [] });
     const pendingByAgent = new Map(busStats.agents.map((a) => [a.id, a.pending]));
+    const registered = new Set(busStats.agents.filter((a) => a.registered).map((a) => a.id));
     return {
       host: { name: link.config ? link.config.name : '', platform, version },
       activeWorkspaceId: appState ? appState.activeWorkspaceId : null,
@@ -94,6 +112,7 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
             exitCode: s && !s.running ? s.exitCode : null,
             startedAt: s ? s.startedAt : null,
             title: turns.title(t.id),
+            agent: isAgentTerminal(t, registered),
           };
         }),
       })),
@@ -367,17 +386,21 @@ function createRemote({ userData, hub, bus, ptys, invokeRenderer, recentProjects
     return { id, state: 'queued' };
   }
 
+  // Only terminals that run an AI agent are chat characters — a plain shell
+  // can't answer. Workspaces without any agent get no group chat either.
   function chatList() {
     const out = [];
+    const registered = busRegistered();
     for (const ws of (appState && appState.workspaces) || []) {
+      const agents = ws.terminals.filter((t) => isAgentTerminal(t, registered));
       const group = 'ws:' + ws.id;
+      if (!agents.length && !chat.lastMessage(group)) continue;
       out.push({
         conv: group, kind: 'group', title: ws.name, spaceId: ws.id,
-        members: ws.terminals.filter((t) => !t.external).map((t) => ({ id: t.id, name: t.name, type: t.type, status: termStatus(t) })),
+        members: agents.map((t) => ({ id: t.id, name: t.name, type: t.type, status: termStatus(t) })),
         last: chat.lastMessage(group), unread: chat.unread(group),
       });
-      for (const t of ws.terminals) {
-        if (t.external) continue;
+      for (const t of agents) {
         const conv = 'dm:' + t.id;
         out.push({
           conv, kind: 'dm', title: t.name, spaceId: ws.id, spaceName: ws.name,

@@ -151,7 +151,7 @@ class _GroupProfile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final members = ws?.terminals ?? const <TermInfo>[];
+    final members = (ws?.terminals ?? const <TermInfo>[]).where((t) => t.agent).toList();
     final topics = (client.snapshots[hostId]?.topics ?? const []).where((t) => t['spaceId'] == conv.spaceId).toList();
     return Scaffold(
       body: CustomScrollView(slivers: [

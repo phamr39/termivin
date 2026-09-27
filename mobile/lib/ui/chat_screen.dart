@@ -260,7 +260,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _subtitle(TermInfo? term, WorkspaceInfo? ws) {
     if (isGroup) {
-      final all = ws?.terminals.where((t) => !t.external).toList() ?? const <TermInfo>[];
+      final all = ws?.terminals.where((t) => t.agent).toList() ?? const <TermInfo>[];
       final working = all.where((t) => t.status == 'working').length;
       final waiting = all.where((t) => t.status == 'approval').length;
       final parts = ['${all.length} member${all.length == 1 ? '' : 's'}', if (working > 0) '$working working', if (waiting > 0) '$waiting waiting'];

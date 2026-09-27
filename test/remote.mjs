@@ -191,7 +191,11 @@ check('group message goes to every agent in the workspace', group.ok && group.da
 
 const list = await cmd('chat.list', {});
 const dm = list.data.find((c) => c.conv === 'dm:t1');
-check('chat list has the group and one DM per terminal', list.data.filter((c) => c.kind === 'group').length === 1 && list.data.filter((c) => c.kind === 'dm').length === 2);
+check('chat list has the group and a DM per AI agent only (no plain shells)',
+  list.data.filter((c) => c.kind === 'group').length === 1 &&
+  list.data.filter((c) => c.kind === 'dm').map((c) => c.termId).join() === 't1', list.data.map((c) => c.conv));
+const snapAgents = inbox.filter((m) => m.t === 'snapshot').pop().data.workspaces[0].terminals.map((t) => `${t.name}:${t.agent}`);
+check('snapshot marks which terminals are agents', snapAgents.join() === 'TermiFast:true,TermiEco:false', snapAgents);
 check('DM shows the last message and unread count', dm.last && dm.unread >= 1, dm);
 const hist = await cmd('chat.history', { conv: 'dm:t1', limit: 10 });
 check('history returns the conversation in order', hist.ok && hist.data.map((m) => m.text).includes('please run the tests') && hist.data.at(-1).text === 'tests are green ✅', hist.data.map((m) => m.text));

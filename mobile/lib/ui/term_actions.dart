@@ -56,7 +56,7 @@ Future<void> showTermActions(BuildContext context, String hostId, WorkspaceInfo 
           ),
           const Divider(),
           if (!t.external) ...[
-            ListTile(
+            if (t.agent) ListTile(
               leading: const Icon(Icons.chat_bubble_outline_rounded),
               title: const Text('Chat'),
               onTap: () {
