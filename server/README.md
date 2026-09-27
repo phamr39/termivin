@@ -130,6 +130,30 @@ docker compose up -d
 - Every command is in the audit log (free text input is logged as a length only).
 - Rate limits: 30 API calls/min per IP, ~20 commands/s per phone socket.
 
+## CI/CD with GitLab
+
+`.gitlab-ci.yml` at the repository root:
+
+| Stage | Job | What |
+| --- | --- | --- |
+| test | `test:desktop` | desktop headless suites + desktop ⇄ relay ⇄ phone integration |
+| test | `test:relay` | relay tests, `npm audit` |
+| test | `test:mobile` | `flutter analyze` + `flutter test` |
+| build | `build:relay-image` | builds `server/` and pushes `$CI_REGISTRY_IMAGE/relay:<sha>` (+ `:<tag>`, `:latest` on the default branch) |
+| build | `build:android` | release APKs per ABI as artifacts (tags; manual on the default branch) |
+| deploy | `deploy:relay` | manual: copies the compose file to your server over SSH, pulls the image, restarts, checks `/healthz` |
+
+Runner: Docker executor. Building the image uses Docker-in-Docker, which needs
+`privileged = true`; without it set the CI/CD variable `RELAY_BUILDER=kaniko`.
+
+For `deploy:relay` set these CI/CD variables: `DEPLOY_HOST` (`user@server`),
+`DEPLOY_PATH` (folder holding the relay's `.env`), `SSH_PRIVATE_KEY`,
+`SSH_KNOWN_HOSTS` (`ssh-keyscan <server>`), optionally `DEPLOY_PROFILE=tls`.
+Create a deploy token named `gitlab-deploy` with `read_registry` so the server
+can pull the image later (GitLab then exposes it as `CI_DEPLOY_USER`/`PASSWORD`).
+On the server the compose file runs the pushed image through `RELAY_IMAGE`; the
+`.env` and the data volume stay put.
+
 ## Development
 
 ```bash

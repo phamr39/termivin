@@ -21,7 +21,9 @@ x-logging: &logging
 services:
   relay:
     build: .
-    image: termivin-relay:latest
+    # Set RELAY_IMAGE (e.g. registry.gitlab.com/you/termivin/relay:latest) to
+    # run a prebuilt image: docker compose pull relay && docker compose up -d --no-build
+    image: ${RELAY_IMAGE:-termivin-relay:latest}
     restart: unless-stopped
     env_file:
       - path: .env
