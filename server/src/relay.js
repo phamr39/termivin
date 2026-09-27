@@ -144,7 +144,7 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
     const h = hostState(hostId);
     for (const item of fresh) {
       push.send(db.devicesForHost(hostId), {
-        title: item.kind === 'approval' ? `${item.title} cần duyệt` : `${item.title} đã dừng`,
+        title: item.kind === 'approval' ? `${item.title} needs your approval` : `${item.title} stopped`,
         body: `${h.name} · ${item.excerpt || ''}`.slice(0, 180),
         data: { hostId, attentionId: item.id, termId: item.termId || '', kind: item.kind },
         category: item.kind === 'approval' ? 'APPROVAL' : 'DEFAULT',
@@ -216,7 +216,7 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
       h.offlineTimer = setTimeout(() => {
         if (h.online || !push) return;
         push.send(db.devicesForHost(hostId), {
-          title: `${h.name} offline`, body: 'Máy tính đã mất kết nối với relay.',
+          title: `${h.name} is offline`, body: 'The PC lost its connection to the relay.',
           data: { hostId, kind: 'host_offline' }, category: 'DEFAULT',
         });
       }, OFFLINE_PUSH_GRACE_MS);
@@ -508,21 +508,36 @@ export function createRelay({ db, cfg, push, log = () => {} }) {
     return ok;
   }
 
-  const sweeper = setInterval(() => {
+  function sweep() {
     const cutoff = Date.now() - DEDUPE_MS;
     for (const [k, v] of dedupe) if (v.ts < cutoff && v.result) dedupe.delete(k);
     try { db.prune(); } catch {}
-    // Revocations made from the admin CLI (another process) land here.
+    // Changes made with the admin CLI (another process) land here: revoked
+    // phones, removed or re-enrolled PCs, grants that went away.
     for (const [deviceId, set] of devices) {
       const dev = db.getDevice(deviceId);
-      if (!dev || dev.revoked_at) for (const c of set) c.ws.close(4003, 'revoked');
+      if (!dev || dev.revoked_at) {
+        for (const c of set) c.ws.close(4003, 'revoked');
+        continue;
+      }
+      const granted = new Set(db.grantsForDevice(deviceId).map((g) => g.hostId));
+      for (const c of set) {
+        for (const hostId of [...c.grants.keys()]) if (!granted.has(hostId)) dropGrant(deviceId, hostId);
+      }
     }
-  }, 60000);
+    for (const [hostId, h] of hosts) {
+      if (!h.ws) continue;
+      const row = db.getHost(hostId);
+      if (!row || !row.public_key) h.ws.close(4003, 'host removed or re-enrolled');
+    }
+  }
+  const sweeper = setInterval(sweep, 60000);
 
   return {
     hostWss,
     deviceWss,
     revokeDevice,
+    sweep, // runs every minute; exposed for tests
     // HTTP pairing lands here so live host state can be summarized.
     pair(token, name, platform) {
       const row = db.consumePairToken(token);

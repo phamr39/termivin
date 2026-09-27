@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 export const SCOPES = ['view', 'approve', 'input', 'manage'];
+const REFRESH_GRACE_MS = 60 * 1000;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -69,6 +70,10 @@ export function openDb(cfg) {
   const db = new DatabaseSync(cfg.dbPath);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  // v0.2: refresh tokens remember what replaced them (rotation grace window).
+  for (const col of ['successor TEXT', 'rotated_at INTEGER']) {
+    try { db.exec(`ALTER TABLE refresh_tokens ADD COLUMN ${col}`); } catch {} // already there
+  }
 
   const q = (sql) => db.prepare(sql);
   const now = () => Date.now();
@@ -94,9 +99,11 @@ export function openDb(cfg) {
       return { id, name, code };
     },
     // A fresh code for an existing host (lost key, reinstalled desktop).
+    // New code for a PC whose key is lost or compromised: the old key stops
+    // working right away (a connected PC is dropped within a minute).
     reenrollHost(id) {
       const code = newSecret(12);
-      const r = q(`UPDATE hosts SET enroll_hash = ?, enroll_expires = ? WHERE id = ?`)
+      const r = q(`UPDATE hosts SET enroll_hash = ?, enroll_expires = ?, public_key = NULL WHERE id = ?`)
         .run(hashSecret(code), now() + cfg.enrollTtlMs, id);
       return r.changes ? { id, code } : null;
     },
@@ -197,14 +204,22 @@ export function openDb(cfg) {
         .run(hashSecret(token), deviceId, now() + cfg.refreshTtlMs);
       return token;
     },
+    // Single-use with a short grace: a phone that lost the response (network
+    // drop, app killed before saving) may present the previous token again
+    // for REFRESH_GRACE_MS and gets a fresh one — the earlier successor is
+    // dropped, so there is still only one live token per chain.
     rotateRefresh(token) {
       const hash = hashSecret(token);
       const row = q('SELECT * FROM refresh_tokens WHERE hash = ?').get(hash);
-      q('DELETE FROM refresh_tokens WHERE hash = ?').run(hash);
       if (!row || row.expires_at < now()) return null;
+      if (row.rotated_at && now() - row.rotated_at > REFRESH_GRACE_MS) return null;
       const dev = this.getDevice(row.device_id);
       if (!dev || dev.revoked_at) return null;
-      return { deviceId: row.device_id, refreshToken: this.issueRefresh(row.device_id) };
+      if (row.successor) q('DELETE FROM refresh_tokens WHERE hash = ?').run(row.successor);
+      const next = this.issueRefresh(row.device_id);
+      q('UPDATE refresh_tokens SET rotated_at = COALESCE(rotated_at, ?), successor = ? WHERE hash = ?')
+        .run(now(), hashSecret(next), hash);
+      return { deviceId: row.device_id, refreshToken: next };
     },
 
     // --- audit & activity -------------------------------------------------
@@ -232,10 +247,17 @@ export function openDb(cfg) {
         .all(...hostIds, Number.isFinite(before) ? before : Number.MAX_SAFE_INTEGER, limit)
         .map((r) => ({ ts: r.ts, hostId: r.host_id, kind: r.kind, data: JSON.parse(r.data) }));
     },
+    // A consistent copy while the relay runs (WAL-safe, unlike copying the file).
+    backup(file) {
+      if (fs.existsSync(file)) throw new Error(`${file} already exists`);
+      db.prepare('VACUUM INTO ?').run(file);
+      return file;
+    },
+
     prune() {
       q('DELETE FROM activity WHERE ts < ?').run(now() - cfg.activityRetentionMs);
       q('DELETE FROM pair_tokens WHERE expires_at < ?').run(now() - 60 * 60 * 1000);
-      q('DELETE FROM refresh_tokens WHERE expires_at < ?').run(now());
+      q('DELETE FROM refresh_tokens WHERE expires_at < ? OR rotated_at < ?').run(now(), now() - REFRESH_GRACE_MS);
     },
   };
 }

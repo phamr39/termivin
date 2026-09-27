@@ -257,7 +257,7 @@ test('refresh rotation and revocation', async () => {
   const r1 = await post('/api/token/refresh', { refreshToken: paired.refreshToken });
   assert.equal(r1.status, 200);
   assert.notEqual(r1.json.refreshToken, paired.refreshToken);
-  assert.equal((await post('/api/token/refresh', { refreshToken: paired.refreshToken })).status, 401, 'old refresh token is spent');
+  // (re-using the previous token is covered by the grace-window test below)
 
   const { c: phone } = await connectPhone(r1.json.accessToken);
   host.send({ t: 'devices.revoke', deviceId: paired.deviceId });
@@ -267,6 +267,51 @@ test('refresh rotation and revocation', async () => {
   srv.relay.revokeDevice(paired.deviceId);
   assert.equal((await post('/api/token/refresh', { refreshToken: r1.json.refreshToken })).status, 401);
   host.ws.close();
+});
+
+test('refresh rotation tolerates a lost response for a moment', async () => {
+  const h = await enrolledHost();
+  const host = await connectHost(h);
+  const paired = await pairPhone(host);
+  // the phone never saw this response (network drop) …
+  const lost = await post('/api/token/refresh', { refreshToken: paired.refreshToken });
+  assert.equal(lost.status, 200);
+  // … so it retries with the old token: still accepted within the grace window
+  const retry = await post('/api/token/refresh', { refreshToken: paired.refreshToken });
+  assert.equal(retry.status, 200);
+  // and the successor it never received is gone — one live token per chain
+  assert.equal((await post('/api/token/refresh', { refreshToken: lost.json.refreshToken })).status, 401);
+  assert.equal((await post('/api/token/refresh', { refreshToken: retry.json.refreshToken })).status, 200);
+  host.ws.close();
+});
+
+test('admin changes from the CLI reach live sockets', async () => {
+  const h = await enrolledHost();
+  const host = await connectHost(h);
+  const paired = await pairPhone(host);
+  const { c: phone } = await connectPhone(paired.accessToken);
+
+  // re-enrolling a PC drops its old key at once
+  srv.db.reenrollHost(h.id);
+  srv.relay.sweep();
+  assert.equal(await host.closed, 4003);
+  const again = client(`${wsBase}/ws/host`);
+  await again.open();
+  const { nonce } = await again.next('challenge');
+  again.send({ t: 'auth', hostId: h.id, sig: crypto.sign(null, Buffer.from(nonce), h.key.privateKey).toString('base64') });
+  assert.equal(await again.closed, 4003, 'the old key no longer authenticates');
+
+  // removing the PC drops the phone's grant (its only one → socket closed)
+  srv.db.removeHost(h.id);
+  srv.relay.sweep();
+  assert.equal(await phone.closed, 4003);
+});
+
+test('backup makes a consistent copy', () => {
+  const file = path.join(dataDir, 'backup-test.db');
+  srv.db.backup(file);
+  assert.ok(fs.statSync(file).size > 0);
+  assert.throws(() => srv.db.backup(file), /already exists/);
 });
 
 test('bad access tokens are refused', async () => {

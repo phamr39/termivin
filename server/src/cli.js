@@ -15,7 +15,8 @@ const USAGE = `termivin-relay — admin
   host remove <id>       delete a PC and every phone grant on it
   device list            paired phones
   device revoke <id>     revoke a phone everywhere
-  audit [--host <id>] [--limit N]   recent actions`;
+  audit [--host <id>] [--limit N]   recent actions
+  backup [file]          consistent copy of the database (default /data/backup-<date>.db)`;
 
 const fmt = (ts) => (ts ? new Date(ts).toISOString().replace('T', ' ').slice(0, 19) : '—');
 
@@ -40,7 +41,7 @@ function main(argv) {
     if (group === 'host' && cmd === 'reenroll') {
       const r = db.reenrollHost(rest[0]);
       if (!r) throw new Error('no such host');
-      console.log(`New enrollment code for ${r.id} (valid 24 h):\n\n  ${r.code}\n`);
+      console.log(`New enrollment code for ${r.id} (valid 24 h). Its old key no longer works.\n\n  ${r.code}\n`);
       return 0;
     }
     if (group === 'host' && cmd === 'list') {
@@ -65,6 +66,12 @@ function main(argv) {
     if (group === 'device' && cmd === 'revoke') {
       if (!db.revokeDevice(rest[0])) throw new Error('no such active device');
       console.log('revoked');
+      return 0;
+    }
+    if (group === 'backup') {
+      const file = cmd || `${cfg.dataDir}/backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.db`;
+      console.log(`Backed up to ${db.backup(file)}`);
+      console.log('Copy it off the server with: docker compose cp relay:' + file + ' .');
       return 0;
     }
     if (group === 'audit') {

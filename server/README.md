@@ -21,8 +21,8 @@ curl http://localhost:8787/healthz
 # {"ok":true,"hostsOnline":0,"devicesOnline":0}
 ```
 
-Data (SQLite: PCs, phones, grants, audit) lives in `./data` — back that
-folder up; nothing else is stateful.
+Data (SQLite: PCs, phones, grants, audit) lives in the `termivin_relay-data`
+Docker volume — the only state. See *Backup and upgrades*.
 
 ### Where phones reach it
 
@@ -70,16 +70,39 @@ after 5 minutes. A phone can be paired with several PCs (System → Add another 
 
 ```bash
 docker compose exec relay termivin-relay host add <name>       # new PC → enrollment code
-docker compose exec relay termivin-relay host reenroll <id>     # lost key / reinstalled PC
+docker compose exec relay termivin-relay host reenroll <id>     # lost/stolen key or reinstalled PC — the old key stops working
 docker compose exec relay termivin-relay host list
 docker compose exec relay termivin-relay host remove <id>
 docker compose exec relay termivin-relay device list
 docker compose exec relay termivin-relay device revoke <id>     # disconnected within a minute
 docker compose exec relay termivin-relay audit --limit 50
+docker compose exec relay termivin-relay backup
 ```
 
 Phones can also be revoked from the desktop (Settings → Remote) or from
 another phone with the `manage` scope (System tab).
+
+## Backup and upgrades
+
+```bash
+docker compose exec relay termivin-relay backup          # consistent copy inside the volume
+docker compose cp relay:/data/backup-<date>.db .         # take it off the server
+
+git pull && docker compose up -d --build                  # upgrade; the volume is kept
+```
+
+Restore: stop the relay, put the backup in the volume as `/data/relay.db`
+(remove any `relay.db-wal` / `relay.db-shm` first), start it again.
+
+**Coming from an older checkout that used `./data`:** before the first
+`docker compose up` with this version, copy the database into the volume:
+
+```bash
+docker compose create relay
+docker compose cp data/relay.db relay:/data/relay.db
+docker run --rm -v termivin_relay-data:/data alpine chown -R 1000:1000 /data
+docker compose up -d
+```
 
 ## Configuration (`.env`)
 
@@ -93,8 +116,9 @@ another phone with the `manage` scope (System tab).
 ## Security model
 
 - **PCs**: Ed25519 key per PC, challenge-signed on every connection.
-- **Phones**: refresh token (90 days, rotated on every use, stored in the
-  phone's keychain/keystore) → access token (15 min). Only hashes are stored.
+- **Phones**: refresh token (90 days, rotated on every use with a 60 s grace
+  for a response lost on a flaky network, stored in the phone's
+  keychain/keystore) → access token (15 min). Only hashes are stored.
 - **Scopes per phone and PC**: `view`, `approve` (answer prompts, quick keys,
   nudge), `input` (free typing, chat prompts), `manage` (start/stop/restart,
   create, rename, permission mode, revoke phones). Pairing grants all four by
