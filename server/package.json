@@ -1,0 +1,22 @@
+{
+  "name": "termivin-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted relay between Termivin desktops and the Termivin mobile app",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "termivin-relay": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

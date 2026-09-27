@@ -22,3 +22,28 @@ when assessing impact:
 
 Reports about escaping the renderer sandbox, IPC abuse from untrusted content,
 or the helper acting on windows it should not touch are very welcome.
+
+### Remote control (relay `server/` + phone app `mobile/`)
+
+The remote feature can type into your terminals from a phone, so a paired
+phone with the `input` or `manage` scope is effectively a shell on the PC.
+That is the design; the security boundary is the pairing, and these are the
+things we treat as vulnerabilities:
+
+- Getting a PC or a phone accepted by a relay without its enrollment code /
+  pairing token, or reusing a spent, expired or revoked one.
+- A phone doing more than its scopes allow (e.g. typing with only `view`).
+- Answering an approval prompt other than the one the phone was shown
+  (the PC must check the prompt hash before sending keys).
+- An agent on the bus reading another agent's mail or sending as it, or
+  getting a non-image file out through `termivin send owner --image`.
+- The relay persisting terminal output or chat content (it must not).
+
+Not vulnerabilities, but know them:
+
+- The relay operator (you, self-hosted) can see everything that passes
+  through it; there is no end-to-end encryption yet.
+- A relay served over plain `http://` exposes tokens to anyone on the path —
+  use HTTPS (Caddy profile) or a VPN for anything beyond your LAN.
+- Paired phones are listed in Settings → Remote on the PC and can be revoked
+  there or with `termivin-relay device revoke`.

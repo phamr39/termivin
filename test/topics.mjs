@@ -15,7 +15,7 @@ const bus = require(BUS_PATH);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'topictest-'));
 bus.start(dir, () => {});
 await new Promise((r) => setTimeout(r, 200));
-const { url, token } = bus.info();
+const { url } = bus.info();
 console.log('bus at', url);
 
 // ws1 has two agents, ws2 has two, ws3 has one.
@@ -32,7 +32,7 @@ const call = (agent, method, route, body) =>
   fetch(url + route, {
     method,
     headers: {
-      authorization: 'Bearer ' + token,
+      authorization: 'Bearer ' + bus.agentToken(agent),
       'x-termivin-agent': agent,
       ...(body ? { 'content-type': 'application/json' } : {}),
     },
@@ -140,7 +140,7 @@ const cli = (agent, args) =>
   new Promise((resolve) => {
     execFile(process.execPath, [CLI_PATH, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, TERMIVIN_URL: live.url, TERMIVIN_TOKEN: live.token, TERMIVIN_AGENT: agent },
+      env: { ...process.env, TERMIVIN_URL: live.url, TERMIVIN_TOKEN: bus.agentToken(agent), TERMIVIN_AGENT: agent },
     }, (err, stdout, stderr) => resolve(String(stdout || '') + String(stderr || '')));
   });
 

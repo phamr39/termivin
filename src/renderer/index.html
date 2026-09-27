@@ -28,7 +28,7 @@
       <div id="workspace-list"></div>
       <div id="sidebar-footer">
         <span id="app-version" title="Termivin version"></span>
-        <button id="settings-btn" class="icon-btn" title="Settings — theme">⚙</button>
+        <button id="settings-btn" class="icon-btn" title="Settings — theme, remote">⚙</button>
       </div>
     </aside>
 
@@ -110,9 +110,63 @@
   <div id="settings-overlay" class="modal-overlay hidden">
     <div class="modal">
       <div class="modal-title">Settings</div>
-      <div class="settings-section-title">Theme</div>
-      <div class="settings-note">Applies to the whole app — panels, maps, and the terminals themselves.</div>
-      <div id="theme-list" class="theme-list"></div>
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-pane="theme">Theme</button>
+        <button class="settings-tab" data-pane="remote">Remote <span id="remote-tab-dot" class="remote-dot"></span></button>
+      </div>
+      <div class="settings-pane" data-pane="theme">
+        <div class="settings-note">Applies to the whole app — panels, maps, and the terminals themselves.</div>
+        <div id="theme-list" class="theme-list"></div>
+      </div>
+      <div class="settings-pane hidden" data-pane="remote">
+        <div class="settings-note">Manage these terminals from your phone through a relay you host yourself (Docker). Nothing is exposed on this PC — it only connects out. See docs/REMOTE.md.</div>
+        <div id="remote-status" class="remote-status"><span class="remote-dot"></span><span class="remote-status-text">Not set up</span></div>
+
+        <div id="remote-setup" class="remote-block">
+          <div class="form-row">
+            <label>Relay URL <span class="hint">— e.g. https://relay.example.com or http://192.168.1.20:8787</span></label>
+            <input id="remote-url" type="text" placeholder="http://localhost:8787" spellcheck="false" />
+          </div>
+          <div class="form-row">
+            <label>Enrollment code <span class="hint">— on the server: <code>docker compose exec relay termivin-relay host add "My PC"</code></span></label>
+            <input id="remote-code" type="text" placeholder="paste the code" spellcheck="false" />
+          </div>
+          <div class="remote-actions">
+            <button id="remote-connect" class="btn btn-primary">Connect this PC</button>
+            <span id="remote-setup-error" class="remote-error"></span>
+          </div>
+        </div>
+
+        <div id="remote-manage" class="remote-block hidden">
+          <div class="remote-kv"><span>Relay</span><code id="remote-url-view"></code></div>
+          <div class="remote-kv"><span>This PC</span><span id="remote-name-view"></span></div>
+          <label class="remote-toggle"><input id="remote-enabled" type="checkbox" /> Connected (turn off to go dark without forgetting the relay)</label>
+
+          <div class="settings-section-title">Pair a phone</div>
+          <div class="form-row">
+            <label>Address the phone uses <span class="hint">— leave empty to use the relay's own (RELAY_PUBLIC_URL)</span></label>
+            <input id="remote-phone-url" type="text" placeholder="same as the relay URL" spellcheck="false" />
+          </div>
+          <div class="remote-actions">
+            <button id="remote-pair" class="btn btn-primary">Show pairing code</button>
+            <span id="remote-pair-error" class="remote-error"></span>
+          </div>
+          <div id="remote-pair-box" class="remote-pair hidden">
+            <img id="remote-qr" alt="Pairing QR code" />
+            <div class="remote-pair-side">
+              <div class="settings-note">Scan with the Termivin app, or paste this code into it. Valid for <span id="remote-pair-ttl">5:00</span>, single use.</div>
+              <textarea id="remote-pair-text" readonly rows="4" spellcheck="false"></textarea>
+              <button id="remote-pair-copy" class="btn btn-ghost btn-sm">Copy code</button>
+            </div>
+          </div>
+
+          <div class="settings-section-title">Paired phones</div>
+          <div id="remote-devices" class="remote-devices"><div class="settings-note">—</div></div>
+          <div class="remote-actions">
+            <button id="remote-forget" class="btn btn-ghost btn-sm btn-danger-text">Forget this relay</button>
+          </div>
+        </div>
+      </div>
       <div class="modal-actions">
         <button id="settings-close" class="btn btn-ghost">Close</button>
       </div>

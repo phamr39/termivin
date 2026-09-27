@@ -7,11 +7,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 
 ### Added
 
+- **Remote: phone app + self-hosted relay.** `server/` is a Docker-packaged relay (Node, SQLite, optional Caddy TLS and FCM push) that Termivin connects *out* to — no port is opened on the PC. `mobile/` is a Flutter app for Android and iOS with an Inbox (approvals, unanswered asks, crashes), a chat view (workspace groups, one character per terminal, messages typed into idle agents or left as bus mail, one summary message per finished task instead of every step — live progress while the agent works), live terminal views with quick keys, and terminal lifecycle control. Pair from ⚙ Settings → **Remote** with a QR code. PCs authenticate with an Ed25519 key, phones with rotating refresh tokens; per-phone scopes, revocation and an audit log. See `docs/REMOTE.md`.
+- **Images in the phone chat.** Agents can show you a screenshot with `termivin send owner --image shot.png "caption"`, and 📎 in any chat captures the PC screen. Images are checked by content (only real images leave the PC), downsized to 1600 px, stored on the PC and fetched in chunks through the relay; tap one for a full-screen, zoomable view.
+- **The human is on the agent bus.** Agents reach you with `termivin send owner "…"`; you can message an agent, a whole workspace or a topic from the phone.
+- **Session hub in the main process**: every PTY also feeds a headless terminal there (screen, status, prompt detection, a one-line summary, a sequence-numbered ring buffer), so remote viewers see exactly what is on screen and can resume after a dropped connection.
+- `docs/EXTERNAL-AGENTS.md`: research and a proposed design for letting agents outside Termivin connect in (A2A v1.0 + MCP on the relay, with first-contact quarantine).
 - **Restart a terminal in place, keeping its session.** Pane ⋯ → *Restart (keep session)* stops the process and starts it again with the terminal's restore command — `claude --continue` / `codex resume --last`, with the permission mode kept — while the old output stays on screen. Handy after updating Claude Code: the conversation picks up where it was, now on the new binary. It asks first only when something would be lost (the agent is mid-step or an approval is pending) or when another running terminal shares the folder, since `--continue` resumes the newest session there.
 - **CI on every push and pull request** — Windows, macOS and Linux run the syntax/packaging checks, new unit tests for `state.js` and approval detection, and the agent-bus suite.
 
 ### Fixed
 
+- **Numbered lists no longer look like permission prompts.** A plan in an agent's answer ("1. Run the migration / 2. …") above its idle input box was flagged as waiting for approval — and Approve would press Enter into the input box. A menu now needs a selection marker and has to sit at the end of the screen.
+- **Claude Code's folder-trust dialog is recognised** (an unnumbered arrow-key list with "No" preselected); Approve picks the yes option instead of pressing Enter on the preselected "No".
+- **Prompts no longer flicker or re-notify** while they are redrawn; a notification fires once per prompt.
+- **Resume / restart of a Claude terminal that never had a conversation** no longer dies with "No conversation found to continue" — it starts a fresh session there.
+- **Terminals don't inherit a surrounding Claude Code session.** When Termivin was started from inside Claude Code, `claude` in its terminals thought it was a child session and stopped saving its transcript.
+- **Per-terminal agent-bus tokens**: one agent can no longer read another's mail or send in its name by changing a header, and `bus.json` no longer holds a secret.
 - **Restarting or reloading could mark a live terminal as exited.** A killed process reports its exit asynchronously; when a new process had already taken over the same terminal id, the old one's exit removed the new one from the PTY table and told the renderer it had died — input went nowhere and the new shell was orphaned. PTY events now only count when they come from the process currently registered under the id.
 - **Links in terminal output open in your browser**, not inside the app window — and the window no longer navigates anywhere but its own page (a dropped URL or a link could previously load a page with the app's privileged bridge attached).
 - **Deleting a workspace hands attached windows back to the desktop** instead of leaving them stuck inside Termivin.

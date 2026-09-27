@@ -25,6 +25,13 @@ const CJS = [
   'src/bus-client.js',
   'src/mac-app-name.js',
   'bin/termivin.js',
+  'src/hub.js',
+  'src/remote/index.js',
+  'src/remote/host-link.js',
+  'src/remote/chat.js',
+  'src/remote/transcripts.js',
+  'src/remote/turns.js',
+  'src/remote/media.js',
 ];
 const ESM = [
   'src/renderer/app.js',
@@ -37,6 +44,8 @@ const ESM = [
   'src/renderer/dashboard.js',
   'src/renderer/home.js',
   'src/renderer/themes.js',
+  'src/renderer/remote-commands.js',
+  'src/shared/approval.js',
 ];
 
 for (const f of CJS) {

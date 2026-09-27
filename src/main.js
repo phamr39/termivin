@@ -40,9 +40,16 @@ try {
 const bus = require('./agent-bus');
 const procStats = require('./proc-stats');
 const tokenUsage = require('./token-usage');
+const { Hub } = require('./hub');
+const { createRemote, rendererBridge } = require('./remote');
+const { projectSlug } = require('./remote/transcripts');
+const QRCode = require('qrcode');
 
 let win = null;
 const ptys = new Map(); // termId -> IPty
+// Main's own view of every PTY (screen, status, approvals) — feeds the remote.
+const hub = new Hub();
+let remote = null;
 
 function stateFile() {
   return path.join(app.getPath('userData'), 'termivin-state.json');
@@ -114,6 +121,7 @@ function writeState(state) {
       lastBackupAt = Date.now();
     }
     writeJsonAtomic(file, state);
+    if (remote) remote.setState(state);
     return true;
   } catch (err) {
     console.error('Failed to save state:', err);
@@ -240,7 +248,9 @@ function createWindow() {
   // Agent bus: loopback only, token in the env of every spawned terminal.
   bus.start(app.getPath('userData'), (evt) => {
     if (win && !win.isDestroyed()) win.webContents.send('bus:event', evt);
+    if (remote) remote.onBusEvent(evt);
   });
+  startRemote();
 }
 
 // Best-effort, async: write/update the Start Menu shortcut that gives our
@@ -272,12 +282,25 @@ function loginShellArgs(shell) {
   return /\/(zsh|bash|sh|fish)$/.test(shell || '') ? ['-l'] : [];
 }
 
+// Launched from inside a Claude Code session (e.g. `termivin` typed in one),
+// the app inherits that session's markers — and a `claude` started in our
+// terminals then believes it is a child session (it even stops saving its
+// transcript). Terminals get the user's environment, not that session's.
+const INHERITED_SESSION_VARS = /^(CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(CHILD_SESSION|SESSION_ID|SESSION_ATTENDED|ENTRYPOINT|EXECPATH|MESSAGING_\w+))$/;
+
+function terminalEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (INHERITED_SESSION_VARS.test(k)) delete env[k];
+  return env;
+}
+
 function busEnv(termId, spaceId, name) {
-  const { url, token } = bus.info();
+  const { url } = bus.info();
   if (!url) return {};
   return {
     TERMIVIN_URL: url,
-    TERMIVIN_TOKEN: token,
+    // bound to this terminal's id — see agentToken in agent-bus.js
+    TERMIVIN_TOKEN: bus.agentToken(termId),
     TERMIVIN_AGENT: termId,
     TERMIVIN_SPACE: spaceId || '',
     TERMIVIN_NAME: name || '',
@@ -303,7 +326,7 @@ ipcMain.handle('pty:create', (event, opts) => {
       rows,
       cwd: cwd && fs.existsSync(cwd) ? cwd : app.getPath('home'),
       env: {
-        ...process.env,
+        ...terminalEnv(),
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
         // Agent bus credentials — an agent needs no config beyond these.
@@ -315,17 +338,20 @@ ipcMain.handle('pty:create', (event, opts) => {
   }
 
   ptys.set(id, proc);
+  hub.start(id, { cols, rows, pid: proc.pid });
 
   // Ids are reused (restart, reload → restore), and a killed process reports
   // its exit asynchronously — possibly after a new process took over the id.
   // Only the process currently registered under the id may speak for it.
   proc.onData((data) => {
     if (ptys.get(id) !== proc) return;
+    hub.data(id, data);
     if (win && !win.isDestroyed()) win.webContents.send('pty:data', id, data);
   });
   proc.onExit(({ exitCode }) => {
     if (ptys.get(id) !== proc) return;
     ptys.delete(id);
+    hub.exit(id, exitCode);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', id, exitCode);
   });
 
@@ -353,6 +379,7 @@ ipcMain.on('pty:resize', (event, id, cols, rows) => {
   const p = ptys.get(id);
   if (p && cols > 0 && rows > 0) {
     try { p.resize(cols, rows); } catch {}
+    hub.resize(id, cols, rows);
   }
 });
 
@@ -361,6 +388,7 @@ ipcMain.on('pty:kill', (event, id) => {
   if (p) {
     try { p.kill(); } catch {}
     ptys.delete(id);
+    hub.stop(id);
   }
 });
 
@@ -370,6 +398,8 @@ ipcMain.on('pty:kill', (event, id) => {
 // and status change; the bus uses it for peer lookup and workspace scoping.
 ipcMain.on('bus:roster', (event, list) => bus.setRoster(list));
 ipcMain.handle('bus:info', () => bus.info());
+// The renderer is trusted (it spawns the terminals); tests use this to act as an agent.
+ipcMain.handle('bus:agent-token', (event, termId) => bus.agentToken(String(termId)));
 ipcMain.handle('bus:pending', (event, termId) => bus.pendingCount(termId));
 ipcMain.handle('bus:stats', () => bus.stats());
 ipcMain.handle('bus:topic-create', (event, opts) =>
@@ -664,7 +694,19 @@ ipcMain.handle('external:cwds', async (event, pid) => {
 
 // Recent Claude Code project directories (from ~/.claude/projects transcripts)
 // — used as suggestions when converting an external terminal to a Claude one.
-ipcMain.handle('claude:recent-projects', () => {
+ipcMain.handle('claude:recent-projects', () => recentClaudeProjects());
+
+// Does Claude Code have a saved session for this folder? (--continue needs one)
+ipcMain.handle('claude:has-session', (event, cwd) => {
+  try {
+    const dir = path.join(os.homedir(), '.claude', 'projects', projectSlug(cwd || app.getPath('home')));
+    return fs.readdirSync(dir).some((f) => f.endsWith('.jsonl'));
+  } catch {
+    return false;
+  }
+});
+
+function recentClaudeProjects() {
   try {
     const base = path.join(os.homedir(), '.claude', 'projects');
     const byCwd = new Map(); // cwd -> mtime
@@ -701,7 +743,7 @@ ipcMain.handle('claude:recent-projects', () => {
   } catch {
     return [];
   }
-});
+}
 
 // ---------- Dialogs ----------
 
@@ -713,6 +755,113 @@ ipcMain.handle('dialog:pick-folder', async (event, defaultPath) => {
   const res = await dialog.showOpenDialog(win, opts);
   if (res.canceled || !res.filePaths.length) return null;
   return res.filePaths[0];
+});
+
+// ---------- Remote (self-hosted relay + phone) ----------
+// See docs/REMOTE.md. Off until a relay is enrolled in Settings → Remote.
+
+function startRemote() {
+  if (remote) return;
+  const invokeRenderer = rendererBridge(ipcMain, () => win);
+  remote = createRemote({
+    userData: app.getPath('userData'),
+    hub,
+    bus,
+    ptys,
+    invokeRenderer,
+    recentProjects: recentClaudeProjects,
+    platform: process.platform,
+    version: app.getVersion(),
+    notifyRenderer: (channel, payload) => {
+      if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+    },
+    encodeImage: encodeImageForPhone,
+    captureScreen: capturePrimaryScreen,
+  });
+  const saved = readState();
+  if (saved) remote.setState(saved);
+  hub.ready.then(() => remote.start());
+}
+
+// Images for the phone chat: at most 1600 px on the long side. Small PNGs
+// (typical UI screenshots) stay PNG so text stays crisp; the rest becomes JPEG.
+const PHONE_IMAGE_MAX = 1600;
+function encodeImageForPhone(buffer, mime) {
+  const img = nativeImage.createFromBuffer(buffer);
+  if (img.isEmpty()) {
+    // A format nativeImage cannot decode (e.g. WebP on some platforms): pass it through.
+    return { buffer, mime, width: null, height: null };
+  }
+  let { width, height } = img.getSize();
+  let out = img;
+  if (Math.max(width, height) > PHONE_IMAGE_MAX) {
+    const scale = PHONE_IMAGE_MAX / Math.max(width, height);
+    out = img.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'good' });
+    ({ width, height } = out.getSize());
+  }
+  if (mime === 'image/png' && out === img && buffer.length < 1.5 * 1024 * 1024) {
+    return { buffer, mime, width, height };
+  }
+  return { buffer: out.toJPEG(85), mime: 'image/jpeg', width, height };
+}
+
+// A capture of the primary display, for "show me the PC screen" from the phone.
+async function capturePrimaryScreen() {
+  const { desktopCapturer } = require('electron');
+  const d = screen.getPrimaryDisplay();
+  const w = Math.round(d.size.width * d.scaleFactor);
+  const h = Math.round(d.size.height * d.scaleFactor);
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
+  const src = sources.find((s) => String(s.display_id) === String(d.id)) || sources[0];
+  if (!src || src.thumbnail.isEmpty()) {
+    throw new Error(process.platform === 'darwin'
+      ? 'screen capture is blocked — allow Termivin under System Settings → Privacy & Security → Screen Recording'
+      : 'screen capture failed');
+  }
+  return src.thumbnail.toPNG();
+}
+
+function pairingText(url, token) {
+  return `termivin://pair?u=${encodeURIComponent(url)}&t=${encodeURIComponent(token)}`;
+}
+
+ipcMain.handle('remote:status', () => (remote ? remote.link.info() : { state: 'disabled' }));
+ipcMain.handle('remote:enroll', async (event, opts) => {
+  try {
+    return { ok: true, info: await remote.link.enroll({ url: opts.url, code: opts.code, name: opts.name || os.hostname() }) };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+ipcMain.handle('remote:enable', (event, on) => remote.link.setEnabled(on));
+ipcMain.handle('remote:forget', () => remote.link.forget());
+ipcMain.handle('remote:pair', async (event, opts = {}) => {
+  try {
+    const scopes = Array.isArray(opts.scopes) && opts.scopes.length ? opts.scopes : ['view', 'approve', 'input', 'manage'];
+    const r = await remote.link.createPairing(scopes);
+    // The phone may need a different address than this PC (LAN IP vs localhost):
+    // the relay's RELAY_PUBLIC_URL wins, else the URL this PC uses.
+    const url = opts.url || r.url || remote.link.config.url;
+    const text = pairingText(url, r.token);
+    const qr = await QRCode.toDataURL(text, { margin: 1, width: 280, errorCorrectionLevel: 'M' });
+    return { ok: true, text, qr, url, token: r.token, expiresAt: r.expiresAt };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+ipcMain.handle('remote:devices', async () => {
+  try {
+    return { ok: true, items: await remote.link.listDevices() };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err), items: [] };
+  }
+});
+ipcMain.handle('remote:revoke', async (event, deviceId) => {
+  try {
+    return { ok: true, items: await remote.link.revokeDevice(deviceId) };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err), items: [] };
+  }
 });
 
 // ---------- Links ----------
@@ -840,6 +989,7 @@ app.on('window-all-closed', () => {
 
 let detachDone = false;
 app.on('before-quit', (event) => {
+  if (remote) remote.stop();
   bus.stop();
   for (const p of ptys.values()) {
     try { p.kill(); } catch {}

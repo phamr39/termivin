@@ -3,3 +3,16 @@ dist/
 out/
 *.log
 .dev-profile/
+
+# secrets that must never be committed (push notifications, app signing, env)
+.env
+*.env.local
+google-services.json
+GoogleService-Info.plist
+firebase*.json
+*service-account*.json
+*.keystore
+*.jks
+key.properties
+*.p12
+*.mobileprovision

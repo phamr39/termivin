@@ -1,0 +1,24 @@
+# Keeps the SHA-pinned actions and the dependencies current (as reviewable PRs).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ['*'] }
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      desktop: { patterns: ['*'] }
+  - package-ecosystem: npm
+    directory: /server
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /server
+    schedule: { interval: weekly }
+  - package-ecosystem: pub
+    directory: /mobile
+    schedule: { interval: weekly }
+    groups:
+      mobile: { patterns: ['*'] }

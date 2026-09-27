@@ -26,14 +26,12 @@ function userDataDir() {
 
 function credentials() {
   let url = process.env.TERMIVIN_URL;
-  let token = process.env.TERMIVIN_TOKEN;
-  if (!url || !token) {
-    // The app was restarted after this terminal spawned: the env still holds
-    // the old port/token, so re-read the file the server writes on start.
+  const token = process.env.TERMIVIN_TOKEN;
+  if (!url) {
+    // Fall back to the address the server writes on start. The token is per
+    // terminal and only ever lives in the terminal's own environment.
     try {
-      const f = JSON.parse(fs.readFileSync(path.join(userDataDir(), 'bus.json'), 'utf8'));
-      url = f.url;
-      token = f.token;
+      url = JSON.parse(fs.readFileSync(path.join(userDataDir(), 'bus.json'), 'utf8')).url;
     } catch {}
   }
   const agent = process.env.TERMIVIN_AGENT;
@@ -157,13 +155,26 @@ async function send(argv) {
   }
   const [to, ...rest] = positional;
   const text = rest.join(' ');
-  if (!to || !text) {
-    console.error('Usage: termivin send <agent-name|@all|#topic> "message" [--ask] [--subject S]');
+  // --image: a picture for the human (e.g. a screenshot to preview on the phone)
+  const imageArg = flag(argv, 'image', null);
+  const image = imageArg ? path.resolve(process.cwd(), imageArg) : null;
+  if (image && !/^@?owner$/i.test(to || '')) {
+    console.error('Images can only be sent to the owner: termivin send owner --image <file> ["caption"]');
+    return 1;
+  }
+  if (image && !fs.existsSync(image)) {
+    console.error(`No such file: ${image}`);
+    return 1;
+  }
+  if (!to || (!text && !image)) {
+    console.error('Usage: termivin send <agent-name|@all|#topic|owner> "message" [--ask] [--subject S]\n' +
+      '       termivin send owner --image <file> ["caption"]');
     return 1;
   }
   const res = await request('POST', '/publish', {
     to,
     body: text,
+    image,
     kind: argv.includes('--ask') ? 'ask' : flag(argv, 'kind', 'note'),
     subject: flag(argv, 'subject', ''),
     corr: flag(argv, 'corr', null),

@@ -307,10 +307,86 @@ function loadProfiles() {
   } catch {}
 }
 
+// --- the owner (the human, e.g. on the phone) --------------------------------
+// "owner" is a reserved recipient in every workspace: agents reach the human
+// with `termivin send owner "…"`. Those messages are not queued for anyone —
+// they are handed to the app (chat view, phone) through the event sink.
+
+function newMid() {
+  return 'p_' + Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
+}
+
+function publishToOwner(me, body) {
+  const mine = describe(me);
+  const msg = {
+    mid: newMid(),
+    id: 'm_' + crypto.randomBytes(5).toString('hex'),
+    ts: Date.now(),
+    from: me,
+    fromName: mine.name,
+    fromSpace: mine.space,
+    to: 'owner',
+    toName: 'Owner',
+    kind: body.kind || 'note',
+    subject: body.subject ? stripControl(body.subject).slice(0, 200) : '',
+    body: stripControl(body.body || '').slice(0, 20000),
+    corr: body.corr || null,
+    // An image for the owner (`termivin send owner --image shot.png`): the
+    // path on this machine. The app reads, checks and downsizes it.
+    image: typeof body.image === 'string' && body.image.length < 1024 ? body.image : null,
+  };
+  if (!msg.body.trim() && !msg.image) return { ok: false, error: 'empty message' };
+  append(mine.space, { t: 'owner', msg });
+  if (msg.corr) clearAsk(msg.corr);
+  onEvent({ type: 'owner', msg });
+  return { ok: true, delivered: ['Owner'] };
+}
+
+// The owner writes to an agent (termId), everyone in a workspace ('@all') or a
+// topic ('#name'). Returns the recipients' names.
+function ownerSend({ to, spaceId, body, subject = '', kind = 'note', corr = null }) {
+  const text = stripControl(body || '').slice(0, 20000);
+  if (!text.trim()) return { ok: false, error: 'empty' };
+  let targets = [];
+  let topicName = null;
+  const raw = String(to || '');
+  const topicMatch = raw.match(/^#(.+)$/);
+  if (topicMatch) {
+    const topic = findTopicByName(topicMatch[1]);
+    if (!topic) return { ok: false, error: 'no_such_topic' };
+    topicName = topic.name;
+    targets = agentsInSpace(topic.spaceId).map((a) => describe(a.termId)).filter(Boolean);
+  } else if (raw === '@all') {
+    targets = agentsInSpace(spaceId).map((a) => describe(a.termId)).filter(Boolean);
+  } else {
+    const d = describe(raw);
+    if (d) targets = [d];
+  }
+  if (!targets.length) return { ok: false, error: 'no_recipients' };
+  const base = {
+    mid: newMid(),
+    ts: Date.now(),
+    from: 'owner',
+    fromName: 'Owner',
+    fromSpace: targets[0].space,
+    kind,
+    subject: stripControl(subject).slice(0, 200),
+    body: text,
+    corr,
+    ttl: DEFAULT_TTL,
+    topic: topicName,
+    broadcast: targets.length > 1,
+  };
+  for (const t of targets) {
+    deliver(t.id, { ...base, id: 'm_' + crypto.randomBytes(5).toString('hex'), to: t.id, toName: t.name }, t.space);
+  }
+  return { ok: true, mid: base.mid, delivered: targets.map((t) => t.name) };
+}
+
 // --- delivery -------------------------------------------------------------
 
 function deliver(toId, msg, spaceId) {
-  const fromSpace = roster.get(msg.from) ? roster.get(msg.from).spaceId : null;
+  const fromSpace = roster.get(msg.from) ? roster.get(msg.from).spaceId : (msg.fromSpace || null);
   // fs lets the replay rebuild cross-workspace links after a restart
   append(spaceId, { t: 'msg', to: toId, msg, fs: fromSpace });
   bumpTraffic(msg.from, toId, fromSpace, spaceId);
@@ -334,6 +410,9 @@ function deliver(toId, msg, spaceId) {
   onEvent({
     type: 'msg', from: msg.from, to: toId, fromSpace, toSpace: spaceId,
     topic: msg.topic || null, kind: msg.kind, corr: msg.corr || null,
+    // full message for the chat view (remote)
+    id: msg.id, mid: msg.mid || msg.id, ts: msg.ts, fromName: msg.fromName, toName: msg.toName,
+    subject: msg.subject || '', body: String(msg.body || '').slice(0, 4000), broadcast: !!msg.broadcast,
   });
   const waiter = waiters.get(toId);
   if (waiter) {
@@ -482,15 +561,16 @@ async function handle(req, res) {
   // Origin is by definition not our CLI, so refuse it outright.
   if (req.headers.origin) return send(res, 403, { error: 'origin not allowed' });
 
-  const auth = req.headers.authorization || '';
-  const supplied = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(token);
-  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (!ok) return send(res, 401, { error: 'bad token' });
-
   const me = req.headers['x-termivin-agent'] || parsed.searchParams.get('agent');
   if (!me) return send(res, 400, { error: 'missing agent id (TERMIVIN_AGENT)' });
+
+  // Each terminal holds a token bound to its own id, so one agent cannot act
+  // as another (read its mail, send in its name) by changing the header.
+  const auth = req.headers.authorization || '';
+  const supplied = Buffer.from(auth.startsWith('Bearer ') ? auth.slice(7) : '');
+  const expected = Buffer.from(agentToken(String(me)));
+  const ok = supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  if (!ok) return send(res, 401, { error: 'bad token' });
   if (!roster.has(me)) return send(res, 404, { error: 'unknown agent: ' + me });
 
   if (route === '/agents' && req.method === 'GET') {
@@ -523,6 +603,10 @@ async function handle(req, res) {
     let topicName = null;
     const rawTo = String(body.to || '');
     const topicMatch = rawTo.match(/^#(.+)$/) || rawTo.match(/^topic:(.+)$/i);
+    if (/^@?owner$/i.test(rawTo.trim())) {
+      const r = publishToOwner(me, body);
+      return send(res, r.ok ? 200 : 400, r);
+    }
     if (topicMatch) {
       const topic = findTopicByName(topicMatch[1]);
       if (!topic) return send(res, 404, { error: `no such topic: #${topicMatch[1]}` });
@@ -557,6 +641,7 @@ async function handle(req, res) {
 
     const mine = describe(me);
     const base = {
+      mid: newMid(),
       ts: Date.now(),
       from: me,
       fromName: mine.name,
@@ -692,7 +777,7 @@ function stats() {
 // --- lifecycle ------------------------------------------------------------
 
 function start(userDataDir, eventSink) {
-  if (server) return { url, token };
+  if (server) return info();
   dataDir = path.join(userDataDir, 'bus');
   onEvent = typeof eventSink === 'function' ? eventSink : () => {};
   token = crypto.randomBytes(24).toString('hex');
@@ -712,7 +797,8 @@ function start(userDataDir, eventSink) {
     try {
       fs.writeFileSync(
         path.join(userDataDir, 'bus.json'),
-        JSON.stringify({ url, token, pid: process.pid }, null, 2),
+        // No secret here: tokens are per terminal and only live in their env.
+        JSON.stringify({ url, pid: process.pid }, null, 2),
         { encoding: 'utf8', mode: 0o600 }
       );
     } catch (err) {
@@ -744,7 +830,12 @@ function setRoster(list) {
 }
 
 function info() {
-  return { url, token, agents: roster.size };
+  return { url, agents: roster.size };
+}
+
+// The credential injected into one terminal's environment (TERMIVIN_TOKEN).
+function agentToken(termId) {
+  return crypto.createHmac('sha256', token || '').update(String(termId)).digest('hex').slice(0, 48);
 }
 
 // How many messages are waiting for a terminal — drives the 📬 badge.
@@ -777,6 +868,6 @@ function stop() {
 }
 
 module.exports = {
-  start, stop, setRoster, info, pendingCount,
+  start, stop, setRoster, info, pendingCount, agentToken, ownerSend,
   stats, createTopic, updateTopic, deleteTopic,
 };

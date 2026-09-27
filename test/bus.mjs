@@ -16,7 +16,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bustest-'));
 const events = [];
 bus.start(dir, (e) => events.push(e));
 await new Promise((r) => setTimeout(r, 200));
-const { url, token } = bus.info();
+const { url } = bus.info();
+const token = (agent) => bus.agentToken(agent);
 console.log('bus at', url);
 
 bus.setRoster([
@@ -29,7 +30,7 @@ const call = (agent, method, route, body, extraHeaders = {}) =>
   fetch(url + route, {
     method,
     headers: {
-      authorization: 'Bearer ' + token,
+      authorization: 'Bearer ' + token(agent),
       'x-termivin-agent': agent,
       ...(body ? { 'content-type': 'application/json' } : {}),
       ...extraHeaders,
@@ -57,6 +58,31 @@ check('rejects a browser Origin', origin.status === 403, origin);
 
 const unknown = await call('nope', 'GET', '/agents');
 check('rejects an unknown agent id', unknown.status === 404, unknown);
+
+// t2's token does not work as t1: an agent cannot read another's mail
+const spoof = await fetch(url + '/recv', {
+  headers: { authorization: 'Bearer ' + bus.agentToken('t2'), 'x-termivin-agent': 't1' },
+});
+check('one agent cannot act as another', spoof.status === 401, spoof.status);
+check('bus.json carries no secret',
+  !JSON.stringify(JSON.parse(fs.readFileSync(path.join(dir, 'bus.json'), 'utf8'))).includes('token'));
+
+// the owner: agents write to the human, the human writes to agents
+const ownerEvents = [];
+const toOwner = await call('t1', 'POST', '/publish', { to: 'owner', body: 'done with the migration' });
+check('agent can send to owner', toOwner.status === 200 && toOwner.json.delivered[0] === 'Owner', toOwner);
+const ownerEvt = events.find((e) => e.type === 'owner');
+check('owner message is handed to the app', ownerEvt && ownerEvt.msg.body === 'done with the migration' && ownerEvt.msg.fromName === 'TermiFast', ownerEvt);
+const fromOwner = bus.ownerSend({ to: 't2', body: 'please rebase first' });
+check('owner can message an agent', fromOwner.ok && fromOwner.delivered[0] === 'TermiEco', fromOwner);
+const ownerMail = await call('t2', 'GET', '/recv');
+check('agent receives owner mail', ownerMail.json.messages[0]?.fromName === 'Owner' && ownerMail.json.messages[0]?.body === 'please rebase first', ownerMail.json);
+const allFromOwner = bus.ownerSend({ to: '@all', spaceId: 'ws1', body: 'stand-up in 5' });
+check('owner broadcast reaches the workspace only', allFromOwner.delivered.length === 2 && !allFromOwner.delivered.includes('TermiUni'), allFromOwner);
+await call('t1', 'GET', '/recv');
+await call('t2', 'GET', '/recv');
+const msgEvt = events.filter((e) => e.type === 'msg').pop();
+check('msg events carry the full message for chat', msgEvt.body === 'stand-up in 5' && msgEvt.mid && msgEvt.fromName === 'Owner', msgEvt);
 
 // --- registry + workspace scoping ---
 const reg = await call('t1', 'POST', '/register', { role: 'backend, owns src/api' });
@@ -144,9 +170,9 @@ const probe = `
     { termId: 't4', spaceId: 'ws1', spaceName: 'Riverside', name: 'TermiPearl', type: 'claude', status: 'idle' },
   ]);
   setTimeout(async () => {
-    const { url, token } = b.info();
+    const { url } = b.info();
     const get = (agent) => fetch(url + '/recv', {
-      headers: { authorization: 'Bearer ' + token, 'x-termivin-agent': agent },
+      headers: { authorization: 'Bearer ' + b.agentToken(agent), 'x-termivin-agent': agent },
     }).then((r) => r.json());
     console.log(JSON.stringify({
       t4: (await get('t4')).messages.map((m) => m.body),
@@ -176,7 +202,7 @@ check('log records deliveries too', logged.some((l) => JSON.parse(l).t === 'deli
 // with the same environment src/main.js injects into a spawned terminal.
 bus.start(dir, () => {});
 await new Promise((r) => setTimeout(r, 200));
-const live = bus.info();
+const live = { ...bus.info(), agentToken: bus.agentToken };
 bus.setRoster([
   { termId: 't1', spaceId: 'ws1', spaceName: 'Riverside', name: 'TermiFast', type: 'claude', status: 'idle' },
   { termId: 't2', spaceId: 'ws1', spaceName: 'Riverside', name: 'TermiEco', type: 'codex', status: 'working' },
@@ -192,7 +218,7 @@ const cli = (agent, args) =>
       [CLI_PATH, ...args],
       {
         encoding: 'utf8',
-        env: { ...process.env, TERMIVIN_URL: live.url, TERMIVIN_TOKEN: live.token, TERMIVIN_AGENT: agent },
+        env: { ...process.env, TERMIVIN_URL: live.url, TERMIVIN_TOKEN: live.agentToken(agent), TERMIVIN_AGENT: agent },
       },
       (err, stdout, stderr) => resolve(String(stdout || '') + String(stderr || ''))
     );
@@ -216,6 +242,13 @@ const cliRecv = await cli('t1', ['recv']);
 check('CLI recv prints a message sent with a leading --ask', cliRecv.includes('flag before the text'), cliRecv);
 check('CLI recv prints the message', cliRecv.includes('ping from the CLI'), cliRecv);
 check('CLI recv flags a question', cliRecv.includes('needs a reply'), cliRecv);
+
+const imgPath = path.join(dir, 'shot.png');
+fs.writeFileSync(imgPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+const cliImg = await cli('t1', ['send', 'owner', '--image', imgPath, 'the new login page']);
+check('CLI sends an image to the owner', cliImg.includes('Sent to: Owner'), cliImg);
+const cliImgBad = await cli('t1', ['send', 'TermiEco', '--image', imgPath]);
+check('CLI refuses images for anyone but the owner', cliImgBad.includes('only be sent to the owner'), cliImgBad);
 
 const cliBad = await cli('t1', ['send', 'NoSuchAgent', 'hello']);
 check('CLI reports an unknown recipient', cliBad.includes('no such agent'), cliBad);

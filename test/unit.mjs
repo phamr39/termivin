@@ -40,11 +40,14 @@ globalThis.window = {
 // The renderer modules are ES modules with a .js extension (the browser loads
 // them as modules); copy them to .mjs so every Node version treats them so.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'termivin-unit-'));
+fs.mkdirSync(path.join(tmp, 'renderer'));
 for (const f of ['state.js', 'presets.js']) {
-  fs.copyFileSync(path.join(root, 'src/renderer', f), path.join(tmp, f.replace('.js', '.mjs')));
+  const src = fs.readFileSync(path.join(root, 'src/renderer', f), 'utf8')
+    .replace("'../shared/approval.js'", JSON.stringify(pathToFileURL(path.join(root, 'src/shared/approval.js')).href));
+  fs.writeFileSync(path.join(tmp, 'renderer', f.replace('.js', '.mjs')), src);
 }
-const S = await import(pathToFileURL(path.join(tmp, 'state.mjs')).href);
-const P = await import(pathToFileURL(path.join(tmp, 'presets.mjs')).href);
+const S = await import(pathToFileURL(path.join(tmp, 'renderer', 'state.mjs')).href);
+const P = await import(pathToFileURL(path.join(tmp, 'renderer', 'presets.mjs')).href);
 
 // --- state.js ---------------------------------------------------------------
 
@@ -121,7 +124,7 @@ check('empty → none', P.detectApproval(['', '']) === null);
 
 // Claude's own numbered answer, sitting above its idle input box, is not a
 // permission prompt — approving it would press Enter into the input box.
-knownIssue('numbered plan in an answer is not an approval', P.detectApproval([
+check('numbered plan in an answer is not an approval', P.detectApproval([
   'Plan:',
   '1. Run the migration',
   '2. Update the tests',
@@ -130,6 +133,51 @@ knownIssue('numbered plan in an answer is not an approval', P.detectApproval([
   '│ >                            │',
   '╰──────────────────────────────╯',
 ]) === null);
+
+const menu = P.detectApproval(claudeMenu);
+check('menu exposes its options', menu.options.map((o) => o.key).join() === '1,2,3' && menu.options[0].label === 'Yes', menu.options);
+check('menu carries the question and what it is about', menu.question === 'Do you want to proceed?' && menu.excerpt.includes('npm test'), menu);
+const again = P.detectApproval([...claudeMenu]);
+check('same prompt → same hash', again.hash === menu.hash);
+const other = P.detectApproval(claudeMenu.map((l) => l.replace('npm test', 'rm -rf dist')));
+check('different command → different hash', other.hash !== menu.hash);
+check('optionKeys picks a menu option by number', P.optionKeys(menu, '2') === '2' && P.optionKeys(menu, '9') === null);
+check('optionKeys for y/n', P.optionKeys(P.detectApproval(['Continue? [y/N]']), 'n') === 'n\r');
+check('menu with a hint row below it',
+  P.detectApproval(['Do you want to make this edit to a.ts?', '❯ 1. Yes', '  2. No', '', 'Esc to cancel · Tab to amend'])?.kind === 'menu');
+check('menu whose first option is not a yes → none',
+  P.detectApproval(['Select a model:', '❯ 1. Opus', '  2. Sonnet']) === null);
+// Claude Code's folder-trust dialog: an arrow-key list without numbers,
+// with "No" preselected.
+const trust = [
+  '──────────────────────────────────────────────────────────────────────────────',
+  ' Accessing workspace:',
+  '',
+  ' C:\\work\\demo',
+  '',
+  ' Quick safety check: Is this a project you created or one you trust? (Like',
+  ' your own code, a well-known open source project, or work from your team). If',
+  " not, take a moment to review what's in this folder first.",
+  '',
+  " Claude Code'll be able to read, edit, and execute files here.",
+  '',
+  ' Security guide',
+  '',
+  ' ❯ No, exit',
+  '   Yes, I trust this folder',
+  '',
+  ' Enter to confirm · Esc to cancel',
+];
+const sel = P.detectApproval(trust);
+check('unnumbered select list (trust dialog) → select', sel?.kind === 'select' && sel.options.length === 2 && sel.selected === 0, sel);
+check('select option 2 = one ↓ then Enter', P.optionKeys(sel, '2') === '\x1b[B\r');
+check('select option 1 = Enter', P.optionKeys(sel, '1') === '\r');
+check('desktop Approve on a select picks the yes option, not the preselected No', P.approvalKeys('select', true, sel) === '\x1b[B\r');
+check('select without its Enter hint → none', P.detectApproval(trust.slice(0, -2)) === null);
+check('summarize skips option rows and the PowerShell banner',
+  P.summarize(['Windows PowerShell', 'Copyright (C) Microsoft Corporation. All rights reserved.', 'Bash command', '> 1. Yes', '  2. No']) === 'Bash command');
+check('summarize skips prompts and chrome',
+  P.summarize(['Editing src/api/users.ts', '╭────╮', '│ >  │', '╰────╯', '? for shortcuts']) === 'Editing src/api/users.ts');
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(failures ? `\nUNIT: ${failures} FAILURE(S)` : `\nUNIT: ALL PASSED${known ? ` (${known} known issue)` : ''}`);

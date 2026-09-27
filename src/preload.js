@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('termivin', {
   onPtyExit: (cb) => ipcRenderer.on('pty:exit', (e, id, code) => cb(id, code)),
 
   busInfo: () => ipcRenderer.invoke('bus:info'),
+  busAgentToken: (termId) => ipcRenderer.invoke('bus:agent-token', termId),
   busRoster: (list) => ipcRenderer.send('bus:roster', list),
   busPending: (termId) => ipcRenderer.invoke('bus:pending', termId),
   busStats: () => ipcRenderer.invoke('bus:stats'),
@@ -49,5 +50,19 @@ contextBridge.exposeInMainWorld('termivin', {
   externalCwds: (pid) => ipcRenderer.invoke('external:cwds', pid),
   externalIsAttached: (hwnd) => ipcRenderer.invoke('external:is-attached', hwnd),
   claudeRecentProjects: () => ipcRenderer.invoke('claude:recent-projects'),
+  claudeHasSession: (cwd) => ipcRenderer.invoke('claude:has-session', cwd),
+
+  // Remote (self-hosted relay + phone) — docs/REMOTE.md
+  remoteStatus: () => ipcRenderer.invoke('remote:status'),
+  remoteEnroll: (opts) => ipcRenderer.invoke('remote:enroll', opts),
+  remoteEnable: (on) => ipcRenderer.invoke('remote:enable', on),
+  remoteForget: () => ipcRenderer.invoke('remote:forget'),
+  remotePair: (opts) => ipcRenderer.invoke('remote:pair', opts),
+  remoteDevices: () => ipcRenderer.invoke('remote:devices'),
+  remoteRevoke: (deviceId) => ipcRenderer.invoke('remote:revoke', deviceId),
+  onRemoteState: (cb) => ipcRenderer.on('remote:state', (e, info) => cb(info)),
+  // Commands the phone sends that change the workspace model run here.
+  onRemoteCmd: (cb) => ipcRenderer.on('remote:cmd', (e, req) => cb(req)),
+  remoteCmdResult: (res) => ipcRenderer.send('remote:cmd-result', res),
   onExternalDropped: (cb) => ipcRenderer.on('external:dropped', (e, info) => cb(info)),
 });

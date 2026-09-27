@@ -1713,3 +1713,59 @@ body.dragging-pane .pane-bar { cursor: grabbing; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* settings — tabs + remote pane */
+.settings-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+.settings-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  padding: 6px 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.settings-pane { display: flex; flex-direction: column; gap: 11px; min-height: 0; }
+.remote-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); display: inline-block; flex-shrink: 0; }
+.remote-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.remote-dot.connecting, .remote-dot.offline { background: var(--orange); }
+.remote-dot.error { background: var(--red); }
+.remote-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); }
+.remote-block { display: flex; flex-direction: column; gap: 11px; }
+.remote-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.remote-error { font-size: 12px; color: var(--red); }
+.remote-kv { display: flex; gap: 10px; font-size: 12.5px; align-items: baseline; }
+.remote-kv > span:first-child { width: 58px; color: var(--text-faint); flex-shrink: 0; }
+.remote-kv code { font-size: 12px; word-break: break-all; }
+.remote-toggle { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+.remote-pair { display: flex; gap: 14px; align-items: flex-start; }
+.remote-pair img { width: 168px; height: 168px; border-radius: 6px; background: #fff; padding: 4px; flex-shrink: 0; }
+.remote-pair-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; flex: 1; }
+.remote-pair textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 6px 8px;
+  resize: none;
+  word-break: break-all;
+}
+.remote-devices { display: flex; flex-direction: column; gap: 6px; }
+.remote-device {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+.remote-device .remote-device-meta { color: var(--text-faint); font-size: 11.5px; margin-left: auto; }

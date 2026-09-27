@@ -1,0 +1,62 @@
+name: termivin
+# termivin-relay
+#
+# Local / LAN / VPN (plain HTTP — phones and PCs on the same network or a VPN):
+#   docker compose up -d
+#   → http://<server-ip>:8787
+#
+# Public domain with automatic HTTPS (Let's Encrypt via Caddy):
+#   set RELAY_DOMAIN, RELAY_PUBLIC_URL and RELAY_HTTP_PORT=127.0.0.1:8787 in .env, then
+#   docker compose --profile tls up -d
+#   → https://<RELAY_DOMAIN>
+#
+# Needs Docker Compose v2.24+ (optional env_file).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  relay:
+    build: .
+    # Set RELAY_IMAGE (e.g. registry.gitlab.com/you/termivin/relay:latest) to
+    # run a prebuilt image: docker compose pull relay && docker compose up -d --no-build
+    image: ${RELAY_IMAGE:-termivin-relay:latest}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RELAY_DATA_DIR: /data
+      RELAY_PORT: "8787"
+    ports:
+      - "${RELAY_HTTP_PORT:-8787}:8787"
+    volumes:
+      # A named volume, not ./data: the relay runs as the unprivileged `node`
+      # user, and a bind-mounted folder Docker creates on a Linux host is
+      # root-owned — SQLite could not write to it.
+      - relay-data:/data
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on: [relay]
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging: *logging
+
+volumes:
+  relay-data:
+  caddy_data:
+  caddy_config:

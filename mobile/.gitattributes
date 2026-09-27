@@ -1,0 +1,6 @@
+# Scripts and iOS/Android build files must keep LF on every checkout
+*.sh text eol=lf
+gradlew text eol=lf
+*.pbxproj text eol=lf
+Podfile text eol=lf
+*.plist text eol=lf
