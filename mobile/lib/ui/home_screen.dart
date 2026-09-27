@@ -479,6 +479,20 @@ class _AppDrawerState extends State<_AppDrawer> {
           subtitle: const Text('PCs, paired phones, audit, unpair', style: TextStyle(fontSize: 12.5)),
           onTap: () => _open('Settings', SystemScreen(client: client)),
         ),
+        ListTile(
+          leading: const Icon(Icons.gavel_outlined),
+          title: const Text('Licenses'),
+          subtitle: const Text('Termivin and third-party notices', style: TextStyle(fontSize: 12.5)),
+          onTap: () {
+            Navigator.of(context).pop();
+            showLicensePage(
+              context: context,
+              applicationName: 'Termivin',
+              applicationLegalese: 'Copyright © 2026 phamr39 — PolyForm Noncommercial 1.0.0.\n'
+                  'Free for noncommercial use; contact the author for a commercial license.',
+            );
+          },
+        ),
         const Divider(),
         const Padding(
           padding: EdgeInsets.fromLTRB(18, 12, 18, 18),
