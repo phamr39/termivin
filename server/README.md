@@ -12,6 +12,14 @@ PC (Termivin) ──WSS out──▶  relay (this)  ◀──WSS──  phone (T
 
 ## 1. Run it
 
+> [!WARNING]
+> **Plain HTTP by default.** `docker compose up -d` serves the relay as
+> `http://` on port 8787 on **all** interfaces. Tokens and terminal output then
+> cross the network unencrypted — fine on a home LAN or inside a VPN
+> (Tailscale/WireGuard), **not** on the internet. For anything reachable from
+> outside use the `tls` profile (HTTPS via Caddy) and set
+> `RELAY_HTTP_PORT=127.0.0.1:8787`, or firewall port 8787.
+
 Needs Docker (Compose v2). From this folder:
 
 ```bash
@@ -65,6 +73,14 @@ The PC only ever connects **out**; no port is opened on it.
 Same Settings pane → **Show pairing code** → scan the QR with the app (or
 copy the `termivin://pair?...` text into it). Codes are single use and expire
 after 5 minutes. A phone can be paired with several PCs (System → Add another PC).
+
+> [!WARNING]
+> **A paired phone gets full control by default.** Pairing grants all four
+> scopes — `view`, `approve`, `input` (type anything into a terminal) and
+> `manage` (start/stop terminals, capture the screen). A phone with `input`
+> is effectively a shell on your PC: lock the phone, pair only devices you own,
+> and revoke a lost one right away (Termivin → Settings → Remote → *Revoke*, or
+> `docker compose exec relay termivin-relay device revoke <id>`).
 
 ## Admin CLI
 

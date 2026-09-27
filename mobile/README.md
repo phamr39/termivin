@@ -14,6 +14,14 @@ Laid out like Telegram:
 
 ## Install
 
+> [!WARNING]
+> **A paired phone gets full control by default.** Pairing grants all four
+> scopes — `view`, `approve`, `input` (type anything into a terminal) and
+> `manage` (start/stop terminals, capture the screen). A phone with `input`
+> is effectively a shell on your PC: lock the phone, pair only devices you own,
+> and revoke a lost one right away (Termivin → Settings → Remote → *Revoke*, or
+> `docker compose exec relay termivin-relay device revoke <id>`).
+
 **Android** — a ready APK is built by `flutter build apk --release`
 (`build/app/outputs/flutter-apk/app-release.apk`; `--split-per-abi` gives a
 smaller `app-arm64-v8a-release.apk` for phones). Copy it to the phone and
