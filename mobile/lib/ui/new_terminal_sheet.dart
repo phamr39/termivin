@@ -88,7 +88,7 @@ class _NewTerminalSheetState extends State<_NewTerminalSheet> {
           Wrap(spacing: 8, children: [
             for (final t in const [('claude', 'Claude Code'), ('codex', 'Codex'), ('shell', 'Shell')])
               ChoiceChip(
-                avatar: Text(TV.character(t.$1).glyph, style: TextStyle(color: TV.character(t.$1).color)),
+                avatar: CharacterGlyph(type: t.$1, size: 16, color: TV.character(t.$1).color),
                 label: Text(t.$2),
                 selected: _type == t.$1,
                 onSelected: (_) => setState(() => _type = t.$1),

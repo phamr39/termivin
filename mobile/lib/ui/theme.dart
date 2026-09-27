@@ -47,12 +47,13 @@ class TV {
         _ => 'not running',
       };
 
-  /// A terminal's "character": colour + glyph by type.
+  /// A terminal's "character": colour + glyph by type. U+FE0E asks for the
+  /// text form — Android otherwise draws ✳ and ⚙ as colour emoji.
   static ({Color color, String glyph}) character(String? type) => switch (type) {
-        'claude' => (color: const Color(0xFFD97757), glyph: '✳'),
-        'codex' => (color: const Color(0xFF19C37D), glyph: '◆'),
+        'claude' => (color: const Color(0xFFD97757), glyph: '✳︎'),
+        'codex' => (color: const Color(0xFF19C37D), glyph: '◆︎'),
         'shell' || 'cmd' => (color: const Color(0xFF65AADD), glyph: '›_'),
-        'custom' => (color: const Color(0xFFA695E7), glyph: '⚙'),
+        'custom' => (color: const Color(0xFFA695E7), glyph: '⚙︎'),
         'external' => (color: orange, glyph: '⧉'),
         _ => (color: const Color(0xFF708499), glyph: '›_'),
       };

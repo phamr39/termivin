@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../core/client.dart';
@@ -33,8 +35,7 @@ class CharacterAvatar extends StatelessWidget {
             ),
           ),
           alignment: Alignment.center,
-          child: Text(c.glyph,
-              style: TextStyle(color: Colors.white, fontSize: size * 0.4, fontWeight: FontWeight.w700, height: 1.05)),
+          child: CharacterGlyph(type: type, size: size * 0.46, color: Colors.white),
         ),
         if (running)
           Positioned(
@@ -45,6 +46,77 @@ class CharacterAvatar extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// The type's mark, drawn rather than typed: phones fall back to their colour
+/// emoji font for ✳ / ⚙ / ◆, which would clash with the avatars.
+class CharacterGlyph extends StatelessWidget {
+  const CharacterGlyph({super.key, required this.type, required this.size, required this.color});
+  final String? type;
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (type) {
+      case 'claude':
+        return CustomPaint(size: Size.square(size), painter: _AsteriskPainter(color));
+      case 'codex':
+        return CustomPaint(size: Size.square(size), painter: _DiamondPainter(color));
+      case 'custom':
+        return Icon(Icons.settings_rounded, size: size * 1.05, color: color);
+      case 'external':
+        return Icon(Icons.filter_none_rounded, size: size * 0.9, color: color);
+      default:
+        return Text('›_', style: TextStyle(color: color, fontSize: size * 0.82, fontWeight: FontWeight.w800, height: 1.0));
+    }
+  }
+}
+
+class _AsteriskPainter extends CustomPainter {
+  _AsteriskPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final p = Paint()
+      ..color = color
+      ..strokeWidth = s.width * 0.13
+      ..strokeCap = StrokeCap.round;
+    final c = s.center(Offset.zero);
+    final r = s.width * 0.46;
+    for (var i = 0; i < 4; i++) {
+      final a = i * 3.14159265 / 4;
+      final d = Offset(r * math.cos(a), r * math.sin(a));
+      canvas.drawLine(c - d, c + d, p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AsteriskPainter old) => old.color != color;
+}
+
+class _DiamondPainter extends CustomPainter {
+  _DiamondPainter(this.color);
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final w = s.width * 0.42;
+    final c = s.center(Offset.zero);
+    canvas.drawPath(
+      Path()
+        ..moveTo(c.dx, c.dy - w)
+        ..lineTo(c.dx + w, c.dy)
+        ..lineTo(c.dx, c.dy + w)
+        ..lineTo(c.dx - w, c.dy)
+        ..close(),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DiamondPainter old) => old.color != color;
 }
 
 /// A workspace's avatar: its initials on a peer colour, like a Telegram group.
