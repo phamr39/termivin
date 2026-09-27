@@ -4,13 +4,13 @@ Flutter app (Android + iOS) for managing the terminals and AI agents running
 in Termivin on your PC — through the relay you host
 ([`server/`](../server/README.md)). Design: [`docs/REMOTE.md`](../docs/REMOTE.md).
 
-| Tab | What it is for |
-| --- | --- |
-| **Inbox** | Everything waiting for you: permission prompts (with the exact options read from the PC's screen), questions between agents nobody answered, terminals that crashed, PCs that went offline |
-| **Chat** | Each workspace is a group chat, each terminal a character you can message. Prompt mode types your message into the agent when it is idle (queued while it is busy); bus mode leaves it in the agent's mailbox. Claude Code's replies and tool steps appear as they happen |
-| **Workspaces** | Every terminal with its live status and what it is doing; resume, restart (keep session), stop, rename, change Claude's permission mode, start new terminals |
-| **Terminal** | The real screen, live, at the PC's size; quick keys (Esc, Enter, 1/2/3, y/n, arrows, ⇧Tab, ^C); a keyboard when the phone has the `input` scope |
-| **Activity / System** | Agent traffic timeline; PCs, paired phones, revoke, audit log, unpair |
+Laid out like Telegram:
+
+- **Chat list** with folder tabs — *All*, *Needs you* (approvals, unanswered asks, crashes), one per workspace. Each workspace is a group chat, each terminal a character; rows show who is working ("working · ▶ npm test…") or waiting on you.
+- **Chats**: your messages are typed into the agent when it is idle (or left as bus mail); while it works a pinned bar shows progress; when it finishes you get **one summary** (headline, full reply and steps on inline buttons). Prompts waiting on you arrive as bot messages with inline buttons.
+- **Profile** of a terminal (tap the chat header): Chat / Terminal / Restart / Stop, session title, folder, permission mode.
+- **Terminal**: the real screen, live, with quick keys.
+- **Drawer**: switch PCs like accounts, Workspaces, Activity, Settings (paired phones, audit, unpair).
 
 ## Install
 
